@@ -41,7 +41,7 @@ export class BlockProcessor {
   }
 
   public async processBlockJob(job: IBlockJob): Promise<void> {
-    return this.jobQueue.enqueueJob(async () => await processBlockJob(this.modules, job));
+    return await this.jobQueue.enqueueJob(async () => await processBlockJob(this.modules, job));
   }
 
   public async processChainSegment(job: IChainSegmentJob): Promise<void> {

@@ -109,7 +109,8 @@ export interface IBeaconChain {
   receiveAttestation(attestation: Attestation): Promise<void>;
 
   /**
-   * Pre-process and run the per slot state transition function
+   * Pre-process and run the per slot state transition function.
+   * Send and forget
    */
   receiveBlock(signedBlock: SignedBeaconBlock, trusted?: boolean): Promise<void>;
   /**
