@@ -209,13 +209,17 @@ export class InitialSyncAsStateMachine {
     // This line decides the starting epoch of the next batch
     const batchId = this.downloaderTarget;
 
-    // TODO: Check if a batch for batchId already exists
-    const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
-    this.batches.set(batchId, batch);
-
     this.downloaderTarget += EPOCHS_PER_BATCH;
 
-    return batch;
+    // Check if a batch for batchId already exists
+    if (this.batches.has(batchId)) {
+      this.logger.error("Attempting to create duplicate batch", {batchId});
+      return null;
+    } else {
+      const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
+      this.batches.set(batchId, batch);
+      return batch;
+    }
   }
 
   /**
