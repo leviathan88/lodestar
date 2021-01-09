@@ -220,6 +220,7 @@ export class InitialSyncAsStateMachine {
    */
   private sendBatch(batch: Batch, peer: PeerId): void {
     // inform the batch about the new request
+    this.logger.info("Downloading batch", {id: batch.id});
     batch.startDownloading(peer);
 
     this.downloadBeaconBlocksByRange(peer, batch.request)
@@ -235,9 +236,9 @@ export class InitialSyncAsStateMachine {
         this.triggerBatchProcessor();
       })
       .catch((error) => {
-        this.logger.debug("beaconBlocksByRange error", error);
+        this.logger.info("Downloaded batch error", error);
 
-        // register the failed download and check if the batch can be retried
+        // register the download error and check if the batch can be retried
         batch.downloadingError();
 
         this.triggerBatchDownloader();
@@ -305,10 +306,10 @@ export class InitialSyncAsStateMachine {
 
       await this.processChainSegment(blocks);
 
+      this.logger.info("Processed batch", {id: batch.id});
       this.onProcessedBatchSuccess(batch, blocks);
     } catch (error) {
-      // onBatchProcessResult - BatchProcessResult.Failed
-      this.logger.debug("Batch processing failed");
+      this.logger.info("Process batch error");
 
       // Handle this invalid batch, that is within the re-process retries limit.
       this.onProcessedBatchError(batch, error);
