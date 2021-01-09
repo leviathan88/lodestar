@@ -1,6 +1,7 @@
 import PeerId from "peer-id";
 import {BeaconBlocksByRangeRequest, Epoch, Root, SignedBeaconBlock} from "@chainsafe/lodestar-types";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {ILogger} from "@chainsafe/lodestar-utils";
 import {computeStartSlotAtEpoch} from "@chainsafe/lodestar-beacon-state-transition";
 import {hashBlocks} from "./utils";
 
@@ -61,8 +62,9 @@ export class Batch {
   /** The number of download retries this batch has undergone due to a failed request. */
   private failedDownloadAttempts: PeerId[] = [];
   private config: IBeaconConfig;
+  private logger: ILogger;
 
-  constructor(config: IBeaconConfig, startEpoch: Epoch, numOfEpochs: number) {
+  constructor(startEpoch: Epoch, numOfEpochs: number, config: IBeaconConfig, logger: ILogger) {
     const startSlot = computeStartSlotAtEpoch(config, startEpoch) + 1;
     const endSlot = startSlot + numOfEpochs * config.params.SLOTS_PER_EPOCH;
 
@@ -74,6 +76,7 @@ export class Batch {
     };
 
     this.config = config;
+    this.logger = logger;
   }
 
   /**
@@ -87,7 +90,9 @@ export class Batch {
    * AwaitingDownload -> Downloading
    */
   startDownloading(peer: PeerId): void {
-    assertState(this.state.status, BatchStatus.AwaitingDownload);
+    if (this.state.status !== BatchStatus.AwaitingDownload) {
+      this.logger.warn("startDownloading", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingDownload));
+    }
 
     this.state = {status: BatchStatus.Downloading, peer, blocks: []};
   }
@@ -96,7 +101,9 @@ export class Batch {
    * Downloading -> AwaitingProcessing
    */
   downloadingSuccess(blocks: SignedBeaconBlock[]): void {
-    assertState(this.state.status, BatchStatus.Downloading);
+    if (this.state.status !== BatchStatus.Downloading) {
+      throw new WrongStateError(this.state.status, BatchStatus.Downloading);
+    }
 
     this.state = {status: BatchStatus.AwaitingProcessing, peer: this.state.peer, blocks};
   }
@@ -106,10 +113,12 @@ export class Batch {
    *             -> AwaitingDownload
    */
   downloadingError(): void {
-    assertState(this.state.status, BatchStatus.Downloading);
+    if (this.state.status === BatchStatus.AwaitingProcessing) {
+      this.failedDownloadAttempts.push(this.state.peer);
+    } else {
+      this.logger.warn("downloadingError", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingProcessing));
+    }
 
-    // Update batch state and register failed attempt
-    this.failedDownloadAttempts.push(this.state.peer);
     this.state = {status: BatchStatus.AwaitingDownload};
   }
 
@@ -117,7 +126,9 @@ export class Batch {
    * AwaitingProcessing -> Processing
    */
   startProcessing(): SignedBeaconBlock[] {
-    assertState(this.state.status, BatchStatus.AwaitingProcessing);
+    if (this.state.status !== BatchStatus.AwaitingProcessing) {
+      throw new WrongStateError(this.state.status, BatchStatus.AwaitingProcessing);
+    }
 
     const blocks = this.state.blocks;
     this.state = {
@@ -131,7 +142,9 @@ export class Batch {
    * Processing -> AwaitingValidation
    */
   processingSuccess(): void {
-    assertState(this.state.status, BatchStatus.Processing);
+    if (this.state.status !== BatchStatus.Processing) {
+      throw new WrongStateError(this.state.status, BatchStatus.Processing);
+    }
 
     this.state = {status: BatchStatus.AwaitingValidation, attempt: this.state.attempt};
   }
@@ -140,9 +153,12 @@ export class Batch {
    * Processing -> AwaitingDownload
    */
   processingError(): void {
-    assertState(this.state.status, BatchStatus.Processing);
+    if (this.state.status === BatchStatus.Processing) {
+      this.failedProcessingAttempts.push(this.state.attempt);
+    } else {
+      this.logger.warn("processingError", {}, new WrongStateError(this.state.status, BatchStatus.Processing));
+    }
 
-    this.failedProcessingAttempts.push(this.state.attempt);
     this.state = {status: BatchStatus.AwaitingDownload};
   }
 
@@ -150,19 +166,17 @@ export class Batch {
    * AwaitingValidation -> AwaitingDownload
    */
   validationError(): void {
-    assertState(this.state.status, BatchStatus.AwaitingValidation);
+    if (this.state.status === BatchStatus.AwaitingValidation) {
+      this.failedProcessingAttempts.push(this.state.attempt);
+    } else {
+      this.logger.warn("validationError", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingValidation));
+    }
 
-    this.failedProcessingAttempts.push(this.state.attempt);
     this.state = {status: BatchStatus.AwaitingDownload};
   }
 }
-
-function assertState<T extends BatchStatus>(
-  currentStatus: BatchStatus,
-  expectedStatus: T
-): asserts currentStatus is typeof expectedStatus {
-  if (currentStatus !== expectedStatus) {
-    throw new WrongStateError(`Wrong batch status ${currentStatus}, expected ${expectedStatus}`);
+class WrongStateError extends Error {
+  constructor(currentStatus: BatchStatus, expectedStatus: BatchStatus) {
+    super(`Wrong batch status ${currentStatus}, expected ${expectedStatus}`);
   }
 }
-class WrongStateError extends Error {}

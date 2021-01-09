@@ -207,7 +207,7 @@ export class InitialSyncAsStateMachine {
     const batchId = this.downloaderTarget;
 
     // TODO: Check if a batch for batchId already exists
-    const batch = new Batch(this.config, batchId, EPOCHS_PER_BATCH);
+    const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
     this.batches.set(batchId, batch);
 
     this.downloaderTarget += EPOCHS_PER_BATCH;
@@ -253,14 +253,10 @@ export class InitialSyncAsStateMachine {
    * Processes the next ready batch, prioritizing optimistic batches over the processing target.
    */
   private async processCompletedBatches(): Promise<void> {
-    if (this.batches.size === 0) {
-      return;
-    }
-
     // Find the id of the batch we are going to process, check the processing target
     const batch = this.batches.get(this.processorTarget);
     if (!batch) {
-      throw Error("RemoveChain.WrongChainState - Batch not found for current processing target");
+      return; // Batch not found for current processing target, should exist eventually
     }
 
     switch (batch.state.status) {
@@ -272,10 +268,10 @@ export class InitialSyncAsStateMachine {
       case BatchStatus.AwaitingDownload:
       case BatchStatus.Processing:
         // these are all inconsistent states:
-        // - AwaitingDownload -> A recoverable failed batch should have been
-        //   re-requested.
+        // - AwaitingDownload -> A recoverable failed batch should have been re-requested.
         // - Processing -> `this.current_processing_batch` is None
-        throw Error("RemoveChain::WrongChainState - Robust target batch indicates inconsistent chain state");
+        this.logger.error(`Inconsistent chain state - processorTarget is ${batch.state.status}`);
+        break;
       case BatchStatus.AwaitingValidation:
         // we can land here if an empty optimistic batch succeeds processing and is
         // inside the download buffer (between `this.processing_target` and
@@ -391,11 +387,6 @@ export class InitialSyncAsStateMachine {
     // make sure this epoch produces an advancement
     if (validatingEpoch <= this.startEpoch) {
       return;
-    }
-
-    // safety check for batch boundaries
-    if (validatingEpoch % EPOCHS_PER_BATCH != this.startEpoch % EPOCHS_PER_BATCH) {
-      throw Error("Validating Epoch is not aligned");
     }
 
     for (const [batchId, batch] of this.batches.entries()) {
