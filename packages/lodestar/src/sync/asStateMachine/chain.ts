@@ -40,8 +40,6 @@ type FinalizedCheckpointPeerSet = {
 export class InitialSyncAsStateMachine {
   /** The start of the chain segment. Any epoch previous to this one has been validated. */
   startEpoch: Epoch;
-  /** Starting epoch of the next batch to be downloaded. */
-  downloaderTarget: BatchId;
   /** Starting epoch of the batch to be processed next. Increments as the chain advances.*/
   processorTarget: BatchId;
   /** Batches validated by this chain. */
@@ -68,7 +66,6 @@ export class InitialSyncAsStateMachine {
   ) {
     this.startEpoch = startEpoch;
     this.batches = new Map();
-    this.downloaderTarget = startEpoch;
     this.processorTarget = startEpoch;
     this.processChainSegment = processChainSegment;
     this.downloadBeaconBlocksByRange = downloadBeaconBlocksByRange;
@@ -190,11 +187,6 @@ export class InitialSyncAsStateMachine {
    * `false` is returned.
    */
   private includeNextBatch(targetEpoch: Epoch): Batch | null {
-    // don't request batches beyond the target head slot
-    if (this.downloaderTarget > targetEpoch) {
-      return null;
-    }
-
     // only request batches up to the buffer size limit
     // NOTE: we don't count batches in the AwaitingValidation state, to prevent stalling sync
     // if the current processing window is contained in a long range of skip slots.
@@ -207,19 +199,17 @@ export class InitialSyncAsStateMachine {
     }
 
     // This line decides the starting epoch of the next batch
-    const batchId = this.downloaderTarget;
+    const activeBatchIds = Array.from(this.batches.keys());
+    const batchId = activeBatchIds.length > 0 ? Math.max(...activeBatchIds) + EPOCHS_PER_BATCH : this.startEpoch;
 
-    this.downloaderTarget += EPOCHS_PER_BATCH;
-
-    // Check if a batch for batchId already exists
-    if (this.batches.has(batchId)) {
-      this.logger.error("Attempting to create duplicate batch", {batchId});
+    // don't request batches beyond the target head slot
+    if (batchId > targetEpoch) {
       return null;
-    } else {
-      const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
-      this.batches.set(batchId, batch);
-      return batch;
     }
+
+    const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
+    this.batches.set(batchId, batch);
+    return batch;
   }
 
   /**
@@ -283,12 +273,9 @@ export class InitialSyncAsStateMachine {
         // inside the download buffer (between `this.processing_target` and
         // `this.to_be_downloaded`). In this case, eventually the chain advances to the
         // batch (`this.processing_target` reaches this point).
-        this.logger.debug("Chain encountered a robust batch awaiting validation");
+        this.logger.info("Chain encountered a robust batch awaiting validation");
 
         this.processorTarget += EPOCHS_PER_BATCH;
-        if (this.downloaderTarget <= this.processorTarget) {
-          this.downloaderTarget = this.processorTarget + EPOCHS_PER_BATCH;
-        }
         this.triggerBatchDownloader();
     }
   }
@@ -337,8 +324,7 @@ export class InitialSyncAsStateMachine {
       this.batchProcessor.end();
     } else {
       this.timeSeries.addPoint(batch.id);
-      const epochsPerSecond = this.timeSeries.computeLinearSpeed();
-      const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
+      const slotsPerSecond = this.timeSeries.computeLinearSpeed() * this.config.params.SLOTS_PER_EPOCH;
       this.logger.info(`Sync progress ${slotsPerSecond.toPrecision(2)} slots / sec`);
 
       this.triggerBatchDownloader();
@@ -394,14 +380,14 @@ export class InitialSyncAsStateMachine {
    * If a previous batch has been validated and it had been re-processed, penalize the original
    * peer.
    */
-  private advanceChain(validatingEpoch: Epoch): void {
+  private advanceChain(validatedEpoch: Epoch): void {
     // make sure this epoch produces an advancement
-    if (validatingEpoch <= this.startEpoch) {
+    if (validatedEpoch <= this.startEpoch) {
       return;
     }
 
     for (const [batchId, batch] of this.batches.entries()) {
-      if (batchId < validatingEpoch) {
+      if (batchId < validatedEpoch) {
         this.batches.delete(batchId);
         this.validatedBatches += 1;
 
@@ -423,16 +409,10 @@ export class InitialSyncAsStateMachine {
       }
     }
 
-    this.processorTarget = Math.max(this.processorTarget, validatingEpoch);
+    this.processorTarget = Math.max(this.processorTarget, validatedEpoch);
     const oldStart = this.startEpoch;
-    this.startEpoch = validatingEpoch;
-    this.downloaderTarget = Math.max(this.downloaderTarget, validatingEpoch);
-    if (this.batches.has(this.downloaderTarget)) {
-      // if a chain is advanced by Range beyond the previous `this.to_be_downloaded`, we
-      // won't have this batch, so we need to request it.
-      this.downloaderTarget += EPOCHS_PER_BATCH;
-    }
+    this.startEpoch = validatedEpoch;
 
-    this.logger.debug("Chain advanced", {oldStart, newStart: this.startEpoch, processorTarget: this.processorTarget});
+    this.logger.info("Chain advanced", {oldStart, newStart: this.startEpoch, processorTarget: this.processorTarget});
   }
 }
