@@ -257,12 +257,18 @@ export class InitialSyncAsStateMachine {
         case BatchStatus.AwaitingProcessing:
           return await this.processBatch(batch);
 
-        case BatchStatus.Downloading:
+        // There MUST be no AwaitingProcessing state after AwaitingDownload, Downloading, Processing
         case BatchStatus.AwaitingDownload:
+        case BatchStatus.Downloading:
         case BatchStatus.Processing:
           return;
       }
     }
+
+    // All batches are in AwaitingValidation which MUST NOT happen and will stall the sync
+    this.logger.error("All batches are in AwaitingValidation state, start again");
+    this.batches.clear();
+    this.triggerBatchDownloader();
   }
 
   /**
@@ -369,20 +375,10 @@ export class InitialSyncAsStateMachine {
         this.batches.delete(batchId);
         this.validatedBatches += 1;
 
-        switch (batch.state.status) {
-          case BatchStatus.AwaitingValidation:
-            // TODO: do peer scoring with download attempts
-            break;
-
-          case BatchStatus.AwaitingDownload:
-            this.logger.error("batch indicates inconsistent chain state while advancing chain");
-            break;
-
-          case BatchStatus.Downloading:
-          case BatchStatus.AwaitingProcessing:
-            break;
-          case BatchStatus.Processing:
-            this.logger.warn("Advancing chain while processing a batch", {batchId});
+        if (batch.state.status === BatchStatus.AwaitingValidation) {
+          // TODO: do peer scoring with download attempts
+        } else {
+          this.logger.warn("Validated batch with inconsistent status", {batchId, status: batch.state.status});
         }
       }
     }
