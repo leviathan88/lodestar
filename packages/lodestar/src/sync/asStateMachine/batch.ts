@@ -41,6 +41,11 @@ export type BatchState =
   | {status: BatchStatus.Processing; attempt: Attempt}
   | {status: BatchStatus.AwaitingValidation; attempt: Attempt};
 
+export type BatchMetadata = {
+  startEpoch: Epoch;
+  status: BatchStatus;
+};
+
 /**
  * Batches are downloaded excluding the first block of the epoch assuming it has already been
  * downloaded.
@@ -52,7 +57,7 @@ export type BatchState =
  *       Batch 1       |              Batch 2              |  Batch 3
  */
 export class Batch {
-  id: Epoch;
+  startEpoch: Epoch;
   /** State of the batch. */
   state: BatchState = {status: BatchStatus.AwaitingDownload};
   /** BeaconBlocksByRangeRequest */
@@ -68,7 +73,7 @@ export class Batch {
     const startSlot = computeStartSlotAtEpoch(config, startEpoch) + 1;
     const endSlot = startSlot + numOfEpochs * config.params.SLOTS_PER_EPOCH;
 
-    this.id = startEpoch;
+    this.startEpoch = startEpoch;
     this.request = {
       startSlot: startSlot,
       count: endSlot - startSlot,
@@ -84,6 +89,10 @@ export class Batch {
    */
   getFailedPeers(): PeerId[] {
     return [...this.failedDownloadAttempts, ...this.failedProcessingAttempts.map((a) => a.peer)];
+  }
+
+  getMetadata(): BatchMetadata {
+    return {startEpoch: this.startEpoch, status: this.state.status};
   }
 
   /**
@@ -177,13 +186,18 @@ export class Batch {
   private getErrorType(expectedStatus: BatchStatus): BatchErrorType {
     return {
       code: "BATCH_ERROR_WRONG_STATUS",
-      id: this.id,
+      startEpoch: this.startEpoch,
       status: this.state.status,
       expectedStatus,
     };
   }
 }
 
-type BatchErrorType = {code: "BATCH_ERROR_WRONG_STATUS"; id: number; status: BatchStatus; expectedStatus: BatchStatus};
+type BatchErrorType = {
+  code: "BATCH_ERROR_WRONG_STATUS";
+  startEpoch: number;
+  status: BatchStatus;
+  expectedStatus: BatchStatus;
+};
 
 class WrongStateError extends LodestarError<BatchErrorType> {}

@@ -4,10 +4,8 @@ import {BeaconBlocksByRangeRequest, Epoch, SignedBeaconBlock} from "@chainsafe/l
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {TimeSeries} from "../stats/timeSeries";
-import {Batch, BatchStatus} from "./batch";
+import {Batch, BatchMetadata, BatchStatus} from "./batch";
 import {shuffle, sortBy, BlockProcessorError} from "./utils";
-
-type BatchId = Epoch;
 
 /**
  * Should return if ALL blocks are processed successfully
@@ -48,7 +46,7 @@ export class InitialSyncAsStateMachine {
   /** Puhasble object to guarantee that processChainSegment is run only at once at anytime */
   private batchProcessor = pushable<void>();
   /** Sorted map of batches undergoing some kind of processing. */
-  private batches: Map<BatchId, Batch>;
+  private batches: Map<Epoch, Batch>;
   /** Dynamic targetEpoch with associated peers. May be `null`ed if no suitable peer set exists */
   private peerSet: FinalizedCheckpointPeerSet | null = null;
   private timeSeries = new TimeSeries({maxPoints: 1000});
@@ -80,9 +78,11 @@ export class InitialSyncAsStateMachine {
     this.triggerBatchDownloader();
   }
 
-  stopSyncing(): void {
-    this.batchProcessor.end();
-    this.timeSeries.clear();
+  /**
+   * For debugging and inspect the current status of active batches
+   */
+  batchesStatus(): BatchMetadata[] {
+    return Array.from(this.batches.values()).map((batch) => batch.getMetadata());
   }
 
   /**
@@ -108,6 +108,11 @@ export class InitialSyncAsStateMachine {
     for await (const _ of this.batchProcessor) {
       await this.processCompletedBatches();
     }
+  }
+
+  stopSyncing(): void {
+    this.batchProcessor.end();
+    this.timeSeries.clear();
   }
 
   /**
@@ -196,17 +201,18 @@ export class InitialSyncAsStateMachine {
       return null;
     }
 
-    // This line decides the starting epoch of the next batch
-    const activeBatchIds = Array.from(this.batches.keys());
-    const batchId = activeBatchIds.length > 0 ? Math.max(...activeBatchIds) + EPOCHS_PER_BATCH : this.validatedEpoch;
+    // This line decides the starting epoch of the next batch. MUST ensure no duplicate batch for the same startEpoch
+    const epochsWithBatch = Array.from(this.batches.keys());
+    const startEpoch =
+      epochsWithBatch.length > 0 ? Math.max(...epochsWithBatch) + EPOCHS_PER_BATCH : this.validatedEpoch;
 
     // don't request batches beyond the target head slot
-    if (batchId > targetEpoch) {
+    if (startEpoch > targetEpoch) {
       return null;
     }
 
-    const batch = new Batch(batchId, EPOCHS_PER_BATCH, this.config, this.logger);
-    this.batches.set(batchId, batch);
+    const batch = new Batch(startEpoch, EPOCHS_PER_BATCH, this.config, this.logger);
+    this.batches.set(startEpoch, batch);
     return batch;
   }
 
@@ -215,7 +221,7 @@ export class InitialSyncAsStateMachine {
    */
   private sendBatch(batch: Batch, peer: PeerId): void {
     // inform the batch about the new request
-    this.logger.info("Downloading batch", {id: batch.id});
+    this.logger.info("Downloading batch", batch.getMetadata());
     batch.startDownloading(peer);
 
     this.downloadBeaconBlocksByRange(peer, batch.request)
@@ -223,7 +229,7 @@ export class InitialSyncAsStateMachine {
         // TODO: verify that blocks are in range
         // TODO: verify that blocks are sequential
 
-        this.logger.info("Downloaded batch", {id: batch.id});
+        this.logger.info("Downloaded batch", batch.getMetadata());
         batch.downloadingSuccess(blocks || []);
 
         // pre-emptively request more blocks from peers whilst we process current blocks,
@@ -232,7 +238,7 @@ export class InitialSyncAsStateMachine {
       })
       .catch((error) => {
         // register the download error and check if the batch can be retried
-        this.logger.error("Downloaded batch error", {id: batch.id}, error);
+        this.logger.error("Downloaded batch error", batch.getMetadata(), error);
         batch.downloadingError();
 
         this.triggerBatchDownloader();
@@ -281,15 +287,15 @@ export class InitialSyncAsStateMachine {
       // result callback. This is done, because an empty batch could end a chain and the logic
       // for removing chains and checking completion is in the callback.
 
-      this.logger.info("Processing batch", {id: batch.id});
+      this.logger.info("Processing batch", batch.getMetadata());
       const blocks = batch.startProcessing();
 
       await this.processChainSegment(blocks);
 
-      this.logger.info("Processed batch", {id: batch.id});
+      this.logger.info("Processed batch", batch.getMetadata());
       this.onProcessedBatchSuccess(batch, blocks);
     } catch (error) {
-      this.logger.error("Process batch error", {id: batch.id}, error);
+      this.logger.error("Process batch error", batch.getMetadata(), error);
 
       // Handle this invalid batch, that is within the re-process retries limit.
       this.onProcessedBatchError(batch, error);
@@ -302,14 +308,15 @@ export class InitialSyncAsStateMachine {
 
     // If the processed batch was not empty, we can validate previous unvalidated blocks.
     if (blocks.length > 0) {
-      this.advanceChain(batch.id);
+      this.advanceChain(batch.startEpoch);
     }
 
     // check if the chain has completed syncing
-    if (this.peerSet && batch.id + EPOCHS_PER_BATCH >= this.peerSet.targetEpoch) {
+    if (this.peerSet && batch.startEpoch + EPOCHS_PER_BATCH >= this.peerSet.targetEpoch) {
       this.batchProcessor.end();
+      this.logger.important("DONE!");
     } else {
-      this.timeSeries.addPoint(batch.id);
+      this.timeSeries.addPoint(batch.startEpoch);
       const slotsPerSecond = this.timeSeries.computeLinearSpeed() * this.config.params.SLOTS_PER_EPOCH;
       this.logger.info(`Sync progress ${slotsPerSecond.toPrecision(2)} slots / sec`);
 
@@ -332,7 +339,7 @@ export class InitialSyncAsStateMachine {
     if (error instanceof BlockProcessorError && error.importedBlocks.length > 0) {
       // At least one block was successfully verified and imported, so we can be sure all
       // previous batches are valid and we only need to download the current failed batch.
-      this.advanceChain(batch.id);
+      this.advanceChain(batch.startEpoch);
     }
 
     // The current batch could not be processed, indicating either the current or previous
@@ -347,7 +354,7 @@ export class InitialSyncAsStateMachine {
     // this is our robust `processing_target`. All previous batches must be awaiting validation
     // All non-validated progress will be destroyed up-to this.startEpoch
     for (const pendingBatch of this.batches.values()) {
-      if (pendingBatch.id < batch.id) {
+      if (pendingBatch.startEpoch < batch.startEpoch) {
         pendingBatch.validationError();
       }
     }
@@ -370,15 +377,15 @@ export class InitialSyncAsStateMachine {
       return;
     }
 
-    for (const [batchId, batch] of this.batches.entries()) {
-      if (batchId < newValidatedEpoch) {
-        this.batches.delete(batchId);
+    for (const [batchKey, batch] of this.batches.entries()) {
+      if (batch.startEpoch < newValidatedEpoch) {
+        this.batches.delete(batchKey);
         this.validatedBatches += 1;
 
         if (batch.state.status === BatchStatus.AwaitingValidation) {
           // TODO: do peer scoring with download attempts
         } else {
-          this.logger.warn("Validated batch with inconsistent status", {batchId, status: batch.state.status});
+          this.logger.warn("Validated batch with inconsistent status", batch.getMetadata());
         }
       }
     }
