@@ -372,7 +372,7 @@ export class InitialSyncAsStateMachine {
 
     const epochsPerSecond = this.timeSeries.computeLinearSpeed();
     const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
-    const hoursToGo = (targetEpoch - lastFinalizedEpoch) / (slotsPerSecond * 3600);
+    const hoursToGo = (targetEpoch - lastFinalizedEpoch) / (epochsPerSecond * 3600);
     this.logger.info(`Sync progress ${lastFinalizedEpoch}/${targetEpoch}`, {
       slotsPerSecond: slotsPerSecond.toPrecision(3),
       hoursLeft: hoursToGo.toPrecision(3),
