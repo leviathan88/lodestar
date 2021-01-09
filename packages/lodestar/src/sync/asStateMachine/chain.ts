@@ -239,9 +239,8 @@ export class InitialSyncAsStateMachine {
         this.triggerBatchProcessor();
       })
       .catch((error) => {
-        this.logger.info("Downloaded batch error", error);
-
         // register the download error and check if the batch can be retried
+        this.logger.error("Downloaded batch error", {id: batch.id}, error);
         batch.downloadingError();
 
         this.triggerBatchDownloader();
@@ -308,7 +307,7 @@ export class InitialSyncAsStateMachine {
       this.logger.info("Processed batch", {id: batch.id});
       this.onProcessedBatchSuccess(batch, blocks);
     } catch (error) {
-      this.logger.info("Process batch error");
+      this.logger.error("Process batch error", {id: batch.id}, error);
 
       // Handle this invalid batch, that is within the re-process retries limit.
       this.onProcessedBatchError(batch, error);
