@@ -301,10 +301,7 @@ export class InitialSyncAsStateMachine {
       this.batchProcessor.end();
       this.logger.important("Completed initial sync", {targetEpoch: this.peerSet.targetEpoch});
     } else {
-      this.timeSeries.addPoint(batch.startEpoch);
-      const slotsPerSecond = this.timeSeries.computeLinearSpeed() * this.config.params.SLOTS_PER_EPOCH;
-      this.logger.info(`Sync progress ${slotsPerSecond.toPrecision(2)} slots / sec`);
-
+      this.logSyncProgress(lastFinalizedEpochBatch);
       this.triggerBatchDownloader();
       this.triggerBatchProcessor();
     }
@@ -362,5 +359,23 @@ export class InitialSyncAsStateMachine {
     const prevValidatedEpoch = this.validatedEpoch;
     this.validatedEpoch = newValidatedEpoch;
     this.logger.info("Chain advanced", {prevValidatedEpoch, newValidatedEpoch});
+  }
+
+  /**
+   * Register sync progress in TimeSeries instance and log current speed and time left
+   */
+  private logSyncProgress(lastFinalizedEpoch: Epoch): void {
+    this.timeSeries.addPoint(lastFinalizedEpoch);
+
+    const targetEpoch = this.peerSet?.targetEpoch;
+    if (!targetEpoch) return;
+
+    const epochsPerSecond = this.timeSeries.computeLinearSpeed();
+    const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
+    const hoursToGo = (targetEpoch - lastFinalizedEpoch) / (slotsPerSecond * 3600);
+    this.logger.info(`Sync progress ${lastFinalizedEpoch}/${targetEpoch}`, {
+      slotsPerSecond: slotsPerSecond.toPrecision(3),
+      hoursLeft: hoursToGo.toPrecision(3),
+    });
   }
 }
