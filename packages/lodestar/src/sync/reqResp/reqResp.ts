@@ -80,13 +80,11 @@ export class BeaconReqRespHandler implements IReqRespHandler {
 
   public async start(): Promise<void> {
     this.network.reqResp.registerHandler(this.onRequest.bind(this));
-    this.network.on(NetworkEvent.peerConnect, this.handshake);
     const myStatus = await createStatus(this.chain);
     await syncPeersStatus(this.network, myStatus);
   }
 
   public async stop(): Promise<void> {
-    this.network.removeListener(NetworkEvent.peerConnect, this.handshake);
     await Promise.all(
       this.network
         .getPeers({supportsProtocols: [createRpcProtocol(Method.Goodbye, ReqRespEncoding.SSZ_SNAPPY)]})
@@ -272,21 +270,6 @@ export class BeaconReqRespHandler implements IReqRespHandler {
       }
     }
   }
-
-  private handshake = async (peerId: PeerId, direction: "inbound" | "outbound"): Promise<void> => {
-    if (direction === "outbound") {
-      const request = await createStatus(this.chain);
-      try {
-        this.network.peerMetadata.setStatus(peerId, await this.network.reqResp.status(peerId, request));
-      } catch (e) {
-        this.logger.verbose("Failed to get peer latest status and metadata", {
-          peerId: peerId.toB58String(),
-          error: e.message,
-        });
-        await this.network.disconnect(peerId);
-      }
-    }
-  };
 
   private injectRecentBlocks = async function* (
     archiveStream: AsyncIterable<SignedBeaconBlock>,

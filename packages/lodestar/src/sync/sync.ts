@@ -1,7 +1,7 @@
 import PeerId from "peer-id";
 import {IBeaconSync, ISyncModules} from "./interface";
 import {defaultSyncOptions, ISyncOptions} from "./options";
-import {getSyncProtocols, getUnknownRootProtocols, INetwork} from "../network";
+import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {sleep} from "@chainsafe/lodestar-utils";
 import {CommitteeIndex, Root, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
@@ -61,6 +61,7 @@ export class BeaconSync implements IBeaconSync {
 
   public async start(): Promise<void> {
     this.mode = SyncMode.WAITING_PEERS as SyncMode;
+    this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
     await this.reqResp.start();
     await this.attestationCollector.start();
     // so we don't wait indefinitely
@@ -74,6 +75,7 @@ export class BeaconSync implements IBeaconSync {
   }
 
   public async stop(): Promise<void> {
+    this.network.removeListener(NetworkEvent.peerConnect, this.onPeerConnect);
     if (this.peerCountTimer) {
       clearInterval(this.peerCountTimer);
     }
@@ -131,6 +133,24 @@ export class BeaconSync implements IBeaconSync {
     }
     await this.attestationCollector.subscribeToCommitteeAttestations(slot, committeeIndex);
   }
+
+  private onPeerConnect = async (peerId: PeerId, direction: "inbound" | "outbound"): Promise<void> => {
+    if (direction !== "outbound") {
+      return;
+    }
+
+    const localStatus = await createStatus(this.chain);
+    try {
+      const peerStatus = await this.network.reqResp.status(peerId, localStatus);
+      this.network.peerMetadata.setStatus(peerId, peerStatus);
+    } catch (e) {
+      this.logger.verbose("Failed to get peer latest status and metadata", {
+        peerId: peerId.toB58String(),
+        error: e.message,
+      });
+      await this.network.disconnect(peerId);
+    }
+  };
 
   private async startInitialSync(): Promise<void> {
     if (this.mode === SyncMode.STOPPED) return;
