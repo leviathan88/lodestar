@@ -2,9 +2,10 @@ import PeerId from "peer-id";
 import pushable from "it-pushable";
 import {BeaconBlocksByRangeRequest, Epoch, SignedBeaconBlock} from "@chainsafe/lodestar-types";
 import {ILogger} from "@chainsafe/lodestar-utils";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {TimeSeries} from "../stats/timeSeries";
 import {Batch, BatchStatus} from "./batch";
 import {shuffle, sortBy, BlockProcessorError} from "./utils";
-import {IBeaconConfig} from "@chainsafe/lodestar-config";
 
 type BatchId = Epoch;
 
@@ -54,6 +55,7 @@ export class InitialSyncAsStateMachine {
   private batches: Map<BatchId, Batch>;
   /** Dynamic targetEpoch with associated peers. May be `null`ed if no suitable peer set exists */
   private peerSet: FinalizedCheckpointPeerSet | null = null;
+  private timeSeries = new TimeSeries({maxPoints: 1000});
   private logger: ILogger;
   private config: IBeaconConfig;
 
@@ -86,6 +88,7 @@ export class InitialSyncAsStateMachine {
 
   stopSyncing(): void {
     this.batchProcessor.end();
+    this.timeSeries.clear();
   }
 
   /**
@@ -330,6 +333,11 @@ export class InitialSyncAsStateMachine {
     if (this.peerSet && this.processorTarget >= this.peerSet.targetEpoch) {
       this.batchProcessor.end();
     } else {
+      this.timeSeries.addPoint(batch.id);
+      const epochsPerSecond = this.timeSeries.computeLinearSpeed();
+      const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
+      this.logger.info(`Sync progress ${slotsPerSecond.toPrecision(2)} slots / sec`);
+
       this.triggerBatchDownloader();
       this.triggerBatchProcessor();
     }
