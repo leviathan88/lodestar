@@ -87,9 +87,8 @@ export class Batch {
    * AwaitingDownload -> Downloading
    */
   startDownloading(peer: PeerId): void {
-    if (this.state.status !== BatchStatus.AwaitingDownload) {
-      throw new WrongStateError("Starting download for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.AwaitingDownload);
+
     this.state = {status: BatchStatus.Downloading, peer, blocks: []};
   }
 
@@ -97,9 +96,7 @@ export class Batch {
    * Downloading -> AwaitingProcessing
    */
   downloadingSuccess(blocks: SignedBeaconBlock[]): void {
-    if (this.state.status !== BatchStatus.Downloading) {
-      throw new WrongStateError("Download completed for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.Downloading);
 
     this.state = {status: BatchStatus.AwaitingProcessing, peer: this.state.peer, blocks};
   }
@@ -109,9 +106,7 @@ export class Batch {
    *             -> AwaitingDownload
    */
   downloadingError(): void {
-    if (this.state.status !== BatchStatus.Downloading) {
-      throw new WrongStateError("Download failed for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.Downloading);
 
     // Update batch state and register failed attempt
     this.failedDownloadAttempts.push(this.state.peer);
@@ -122,9 +117,7 @@ export class Batch {
    * AwaitingProcessing -> Processing
    */
   startProcessing(): SignedBeaconBlock[] {
-    if (this.state.status !== BatchStatus.AwaitingProcessing) {
-      throw new WrongStateError("Starting procesing batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.AwaitingProcessing);
 
     const blocks = this.state.blocks;
     this.state = {
@@ -138,9 +131,7 @@ export class Batch {
    * Processing -> AwaitingValidation
    */
   processingSuccess(): void {
-    if (this.state.status !== BatchStatus.Processing) {
-      throw new WrongStateError("Procesing completed for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.Processing);
 
     this.state = {status: BatchStatus.AwaitingValidation, attempt: this.state.attempt};
   }
@@ -149,9 +140,7 @@ export class Batch {
    * Processing -> AwaitingDownload
    */
   processingError(): void {
-    if (this.state.status !== BatchStatus.Processing) {
-      throw new WrongStateError("Procesing completed for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.Processing);
 
     this.failedProcessingAttempts.push(this.state.attempt);
     this.state = {status: BatchStatus.AwaitingDownload};
@@ -161,13 +150,19 @@ export class Batch {
    * AwaitingValidation -> AwaitingDownload
    */
   validationError(): void {
-    if (this.state.status !== BatchStatus.AwaitingValidation) {
-      throw new WrongStateError("Procesing completed for batch in wrong state");
-    }
+    assertState(this.state.status, BatchStatus.AwaitingValidation);
 
     this.failedProcessingAttempts.push(this.state.attempt);
     this.state = {status: BatchStatus.AwaitingDownload};
   }
 }
 
+function assertState<T extends BatchStatus>(
+  currentStatus: BatchStatus,
+  expectedStatus: T
+): asserts currentStatus is typeof expectedStatus {
+  if (currentStatus !== expectedStatus) {
+    throw new WrongStateError(`Wrong batch status ${currentStatus}, expected ${expectedStatus}`);
+  }
+}
 class WrongStateError extends Error {}
