@@ -39,9 +39,7 @@ type FinalizedCheckpointPeerSet = {
 
 export class InitialSyncAsStateMachine {
   /** The start of the chain segment. Any epoch previous to this one has been validated. */
-  startEpoch: Epoch;
-  /** Starting epoch of the batch to be processed next. Increments as the chain advances.*/
-  processorTarget: BatchId;
+  validatedEpoch: Epoch;
   /** Batches validated by this chain. */
   validatedBatches = 0;
   /** A multi-threaded, non-blocking processor for applying messages to the beacon chain. */
@@ -64,9 +62,8 @@ export class InitialSyncAsStateMachine {
     config: IBeaconConfig,
     logger: ILogger
   ) {
-    this.startEpoch = startEpoch;
+    this.validatedEpoch = startEpoch;
     this.batches = new Map();
-    this.processorTarget = startEpoch;
     this.processChainSegment = processChainSegment;
     this.downloadBeaconBlocksByRange = downloadBeaconBlocksByRange;
     this.config = config;
@@ -96,12 +93,13 @@ export class InitialSyncAsStateMachine {
   async startSyncing(localFinalizedEpoch: Epoch): Promise<void> {
     // to avoid dropping local progress, we advance the chain wrt its batch boundaries. This
 
-    // get the *aligned* epoch that produces a batch containing the `local_finalized_epoch`
-    const validatingEpoch =
-      this.startEpoch + Math.floor((localFinalizedEpoch - this.startEpoch) / EPOCHS_PER_BATCH) * EPOCHS_PER_BATCH;
+    // get the *aligned* epoch that produces a batch containing the `localFinalizedEpoch`
+    const validatedEpoch =
+      this.validatedEpoch +
+      Math.floor((localFinalizedEpoch - this.validatedEpoch) / EPOCHS_PER_BATCH) * EPOCHS_PER_BATCH;
 
     // advance the chain to the new validating epoch
-    this.advanceChain(validatingEpoch);
+    this.advanceChain(validatedEpoch);
 
     this.triggerBatchProcessor();
     this.triggerBatchDownloader();
@@ -200,7 +198,7 @@ export class InitialSyncAsStateMachine {
 
     // This line decides the starting epoch of the next batch
     const activeBatchIds = Array.from(this.batches.keys());
-    const batchId = activeBatchIds.length > 0 ? Math.max(...activeBatchIds) + EPOCHS_PER_BATCH : this.startEpoch;
+    const batchId = activeBatchIds.length > 0 ? Math.max(...activeBatchIds) + EPOCHS_PER_BATCH : this.validatedEpoch;
 
     // don't request batches beyond the target head slot
     if (batchId > targetEpoch) {
@@ -249,34 +247,21 @@ export class InitialSyncAsStateMachine {
    * Processes the next ready batch, prioritizing optimistic batches over the processing target.
    */
   private async processCompletedBatches(): Promise<void> {
-    // Find the id of the batch we are going to process, check the processing target
-    const batch = this.batches.get(this.processorTarget);
-    if (!batch) {
-      return; // Batch not found for current processing target, should exist eventually
-    }
+    // ES6 Map MUST guarantee insertion order so older batches are processed first
+    for (const batch of this.batches.values()) {
+      switch (batch.state.status) {
+        // If an AwaitingProcessing batch exists it can only be preceeded by AwaitingValidation
+        case BatchStatus.AwaitingValidation:
+          break;
 
-    switch (batch.state.status) {
-      case BatchStatus.AwaitingProcessing:
-        return await this.processBatch(batch);
-      case BatchStatus.Downloading:
-        // Batch is not ready, nothing to process
-        break;
-      case BatchStatus.AwaitingDownload:
-      case BatchStatus.Processing:
-        // these are all inconsistent states:
-        // - AwaitingDownload -> A recoverable failed batch should have been re-requested.
-        // - Processing -> `this.current_processing_batch` is None
-        this.logger.error(`Inconsistent chain state - processorTarget is ${batch.state.status}`);
-        break;
-      case BatchStatus.AwaitingValidation:
-        // we can land here if an empty optimistic batch succeeds processing and is
-        // inside the download buffer (between `this.processing_target` and
-        // `this.to_be_downloaded`). In this case, eventually the chain advances to the
-        // batch (`this.processing_target` reaches this point).
-        this.logger.info("Chain encountered a robust batch awaiting validation");
+        case BatchStatus.AwaitingProcessing:
+          return await this.processBatch(batch);
 
-        this.processorTarget += EPOCHS_PER_BATCH;
-        this.triggerBatchDownloader();
+        case BatchStatus.Downloading:
+        case BatchStatus.AwaitingDownload:
+        case BatchStatus.Processing:
+          return;
+      }
     }
   }
 
@@ -314,13 +299,8 @@ export class InitialSyncAsStateMachine {
       this.advanceChain(batch.id);
     }
 
-    // Advance processing target to process next one
-    if (batch.id === this.processorTarget) {
-      this.processorTarget += EPOCHS_PER_BATCH;
-    }
-
     // check if the chain has completed syncing
-    if (this.peerSet && this.processorTarget >= this.peerSet.targetEpoch) {
+    if (this.peerSet && batch.id + EPOCHS_PER_BATCH >= this.peerSet.targetEpoch) {
       this.batchProcessor.end();
     } else {
       this.timeSeries.addPoint(batch.id);
@@ -359,14 +339,12 @@ export class InitialSyncAsStateMachine {
     // results in successful processing, we downvote the original peer that sent us the batch.
 
     // this is our robust `processing_target`. All previous batches must be awaiting validation
+    // All non-validated progress will be destroyed up-to this.startEpoch
     for (const pendingBatch of this.batches.values()) {
       if (pendingBatch.id < batch.id) {
         pendingBatch.validationError();
       }
     }
-
-    // no batch maxed out it process attempts, so now the chain's volatile progress must be reset
-    this.processorTarget = this.startEpoch;
 
     this.triggerBatchDownloader();
   }
@@ -380,14 +358,14 @@ export class InitialSyncAsStateMachine {
    * If a previous batch has been validated and it had been re-processed, penalize the original
    * peer.
    */
-  private advanceChain(validatedEpoch: Epoch): void {
+  private advanceChain(newValidatedEpoch: Epoch): void {
     // make sure this epoch produces an advancement
-    if (validatedEpoch <= this.startEpoch) {
+    if (newValidatedEpoch <= this.validatedEpoch) {
       return;
     }
 
     for (const [batchId, batch] of this.batches.entries()) {
-      if (batchId < validatedEpoch) {
+      if (batchId < newValidatedEpoch) {
         this.batches.delete(batchId);
         this.validatedBatches += 1;
 
@@ -409,10 +387,8 @@ export class InitialSyncAsStateMachine {
       }
     }
 
-    this.processorTarget = Math.max(this.processorTarget, validatedEpoch);
-    const oldStart = this.startEpoch;
-    this.startEpoch = validatedEpoch;
-
-    this.logger.info("Chain advanced", {oldStart, newStart: this.startEpoch, processorTarget: this.processorTarget});
+    const prevValidatedEpoch = this.validatedEpoch;
+    this.validatedEpoch = newValidatedEpoch;
+    this.logger.info("Chain advanced", {prevValidatedEpoch, newValidatedEpoch});
   }
 }
