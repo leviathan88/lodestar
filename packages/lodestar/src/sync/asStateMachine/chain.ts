@@ -361,7 +361,7 @@ export class InitialSyncAsStateMachine {
     // this is our robust `processing_target`. All previous batches must be awaiting validation
     for (const pendingBatch of this.batches.values()) {
       if (pendingBatch.id < batch.id) {
-        batch.validationError();
+        pendingBatch.validationError();
       }
     }
 
