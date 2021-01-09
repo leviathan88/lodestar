@@ -109,8 +109,16 @@ export class BeaconSync implements IBeaconSync {
 
     try {
       for (const block of blocks) {
-        const trusted = true; // TODO: Verify signatures
-        await this.chain.processBlockJob(block, trusted);
+        try {
+          const trusted = true; // TODO: Verify signatures
+          await this.chain.processBlockJob(block, trusted);
+        } catch (e) {
+          if (e instanceof BlockError && e.type.code === BlockErrorCode.BLOCK_IS_ALREADY_KNOWN) {
+            this.logger.info("Chain segment block is already imported", {slot: block.message.slot});
+          } else {
+            throw e;
+          }
+        }
         importedBlocks.push(block);
       }
     } catch (e) {
