@@ -382,7 +382,7 @@ export class InitialSyncAsStateMachine {
           case BatchStatus.AwaitingProcessing:
             break;
           case BatchStatus.Processing:
-            this.logger.debug("Advancing chain while processing a batch", {batchId});
+            this.logger.warn("Advancing chain while processing a batch", {batchId});
         }
       }
     }
