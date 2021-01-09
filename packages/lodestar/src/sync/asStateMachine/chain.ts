@@ -36,7 +36,7 @@ type FinalizedCheckpointPeerSet = {
   targetEpoch: Epoch;
 };
 
-export class SyncingChain {
+export class InitialSyncAsStateMachine {
   /** The start of the chain segment. Any epoch previous to this one has been validated. */
   startEpoch: Epoch;
   /** Starting epoch of the next batch to be downloaded. */
@@ -227,6 +227,7 @@ export class SyncingChain {
         // TODO: verify that blocks are in range
         // TODO: verify that blocks are sequential
 
+        this.logger.info("Downloaded batch", {id: batch.id});
         batch.downloadingSuccess(blocks || []);
 
         // pre-emptively request more blocks from peers whilst we process current blocks,
@@ -251,6 +252,10 @@ export class SyncingChain {
    * Processes the next ready batch, prioritizing optimistic batches over the processing target.
    */
   private async processCompletedBatches(): Promise<void> {
+    if (this.batches.size === 0) {
+      return;
+    }
+
     // Find the id of the batch we are going to process, check the processing target
     const batch = this.batches.get(this.processorTarget);
     if (!batch) {
@@ -259,7 +264,7 @@ export class SyncingChain {
 
     switch (batch.state.status) {
       case BatchStatus.AwaitingProcessing:
-        return await this.processBatch(this.processorTarget);
+        return await this.processBatch(batch);
       case BatchStatus.Downloading:
         // Batch is not ready, nothing to process
         break;
@@ -289,42 +294,38 @@ export class SyncingChain {
    * Sends to process the batch with the given id.
    * The batch must exist and be ready for processing
    */
-  private async processBatch(batchId: BatchId): Promise<void> {
-    const batch = this.batches.get(this.processorTarget);
-    if (!batch) {
-      throw Error("RemoveChain.WrongChainState - Batch not found for current processing target");
-    }
-
+  private async processBatch(batch: Batch): Promise<void> {
     try {
       // NOTE: We send empty batches to the processor in order to trigger the block processor
       // result callback. This is done, because an empty batch could end a chain and the logic
       // for removing chains and checking completion is in the callback.
 
+      this.logger.info("Processing batch", {id: batch.id});
       const blocks = batch.startProcessing();
 
       await this.processChainSegment(blocks);
 
-      this.onProcessedBatchSuccess(batchId, batch, blocks);
+      this.onProcessedBatchSuccess(batch, blocks);
     } catch (error) {
       // onBatchProcessResult - BatchProcessResult.Failed
       this.logger.debug("Batch processing failed");
 
       // Handle this invalid batch, that is within the re-process retries limit.
-      this.onProcessedBatchError(batchId, batch, error);
+      this.onProcessedBatchError(batch, error);
     }
   }
 
-  private onProcessedBatchSuccess(batchId: BatchId, batch: Batch, blocks: SignedBeaconBlock[]): void {
+  private onProcessedBatchSuccess(batch: Batch, blocks: SignedBeaconBlock[]): void {
     // onBatchProcessResult - BatchProcessResult.Success
     batch.processingSuccess();
 
     // If the processed batch was not empty, we can validate previous unvalidated blocks.
     if (blocks.length > 0) {
-      this.advanceChain(batchId);
+      this.advanceChain(batch.id);
     }
 
     // Advance processing target to process next one
-    if (batchId === this.processorTarget) {
+    if (batch.id === this.processorTarget) {
       this.processorTarget += EPOCHS_PER_BATCH;
     }
 
@@ -344,14 +345,14 @@ export class SyncingChain {
    * have received are incorrect or invalid. This indicates the peer has not performed as
    * intended and can result in downvoting a peer.
    */
-  private onProcessedBatchError(batchId: BatchId, batch: Batch, error: Error): void {
+  private onProcessedBatchError(batch: Batch, error: Error): void {
     batch.processingError();
 
     // chain can continue. Check if it can be moved forward
     if (error instanceof BlockProcessorError && error.importedBlocks.length > 0) {
       // At least one block was successfully verified and imported, so we can be sure all
       // previous batches are valid and we only need to download the current failed batch.
-      this.advanceChain(batchId);
+      this.advanceChain(batch.id);
     }
 
     // The current batch could not be processed, indicating either the current or previous
@@ -364,12 +365,10 @@ export class SyncingChain {
     // results in successful processing, we downvote the original peer that sent us the batch.
 
     // this is our robust `processing_target`. All previous batches must be awaiting validation
-    for (const [id, batch] of this.batches.entries()) {
-      if (id >= batchId) {
-        continue;
+    for (const pendingBatch of this.batches.values()) {
+      if (pendingBatch.id < batch.id) {
+        batch.validationError();
       }
-
-      batch.validationError();
     }
 
     // no batch maxed out it process attempts, so now the chain's volatile progress must be reset
@@ -398,35 +397,26 @@ export class SyncingChain {
       throw Error("Validating Epoch is not aligned");
     }
 
-    const removedBatches = new Map<BatchId, Batch>();
     for (const [batchId, batch] of this.batches.entries()) {
       if (batchId < validatingEpoch) {
-        removedBatches.set(batchId, batch);
         this.batches.delete(batchId);
-      }
-    }
+        this.validatedBatches += 1;
 
-    for (const [batchId, batch] of removedBatches.entries()) {
-      this.validatedBatches += 1;
-      switch (batch.state.status) {
-        case BatchStatus.AwaitingValidation:
-          // TODO: do peer scoring with download attempts
-          break;
+        switch (batch.state.status) {
+          case BatchStatus.AwaitingValidation:
+            // TODO: do peer scoring with download attempts
+            break;
 
-        case BatchStatus.Downloading: {
-          // remove this batch from the peer's active requests
-          // REPLY: Not necessary since the active requests are computed from the batches' state
-          break;
+          case BatchStatus.AwaitingDownload:
+            this.logger.error("batch indicates inconsistent chain state while advancing chain");
+            break;
+
+          case BatchStatus.Downloading:
+          case BatchStatus.AwaitingProcessing:
+            break;
+          case BatchStatus.Processing:
+            this.logger.debug("Advancing chain while processing a batch", {batchId});
         }
-
-        case BatchStatus.AwaitingDownload:
-          this.logger.error("batch indicates inconsistent chain state while advancing chain");
-          break;
-
-        case BatchStatus.AwaitingProcessing:
-          break;
-        case BatchStatus.Processing:
-          this.logger.debug("Advancing chain while processing a batch", {batchId});
       }
     }
 
