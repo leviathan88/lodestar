@@ -90,14 +90,16 @@ export class BeaconSync implements IBeaconSync {
       this.logger
     );
 
-    setInterval(() => {
+    // TODO: Figure out a non-shitty way to inject peers into InitialSyncAsStateMachine
+    const interval = setInterval(() => {
       const {checkpoint, peers} = getPeersInitialSync(this.network);
       const targetEpoch = checkpoint.epoch;
       this.logger.info("New peer set", {count: peers.length, targetEpoch});
       initialSync.peerSetChanged({peers: peers.map((p) => p.peerId), targetEpoch});
     }, 3000);
 
-    await initialSync.startSyncing(startEpoch);
+    await initialSync.startSyncing();
+    clearInterval(interval);
 
     this.peerCountTimer = setInterval(this.logPeerCount, 3 * this.config.params.SECONDS_PER_SLOT * 1000);
     await this.startInitialSync();
