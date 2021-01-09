@@ -1,7 +1,7 @@
 import PeerId from "peer-id";
 import {BeaconBlocksByRangeRequest, Epoch, Root, SignedBeaconBlock} from "@chainsafe/lodestar-types";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
-import {ILogger} from "@chainsafe/lodestar-utils";
+import {ILogger, LodestarError} from "@chainsafe/lodestar-utils";
 import {computeStartSlotAtEpoch} from "@chainsafe/lodestar-beacon-state-transition";
 import {hashBlocks} from "./utils";
 
@@ -91,7 +91,7 @@ export class Batch {
    */
   startDownloading(peer: PeerId): void {
     if (this.state.status !== BatchStatus.AwaitingDownload) {
-      this.logger.warn("startDownloading", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingDownload));
+      this.logger.warn("startDownloading", {}, new WrongStateError(this.getErrorType(BatchStatus.AwaitingDownload)));
     }
 
     this.state = {status: BatchStatus.Downloading, peer, blocks: []};
@@ -102,7 +102,7 @@ export class Batch {
    */
   downloadingSuccess(blocks: SignedBeaconBlock[]): void {
     if (this.state.status !== BatchStatus.Downloading) {
-      throw new WrongStateError(this.state.status, BatchStatus.Downloading);
+      throw new WrongStateError(this.getErrorType(BatchStatus.Downloading));
     }
 
     this.state = {status: BatchStatus.AwaitingProcessing, peer: this.state.peer, blocks};
@@ -115,7 +115,7 @@ export class Batch {
     if (this.state.status === BatchStatus.Downloading) {
       this.failedDownloadAttempts.push(this.state.peer);
     } else {
-      this.logger.warn("downloadingError", {}, new WrongStateError(this.state.status, BatchStatus.Downloading));
+      this.logger.warn("downloadingError", {}, new WrongStateError(this.getErrorType(BatchStatus.Downloading)));
     }
 
     this.state = {status: BatchStatus.AwaitingDownload};
@@ -126,7 +126,7 @@ export class Batch {
    */
   startProcessing(): SignedBeaconBlock[] {
     if (this.state.status !== BatchStatus.AwaitingProcessing) {
-      throw new WrongStateError(this.state.status, BatchStatus.AwaitingProcessing);
+      throw new WrongStateError(this.getErrorType(BatchStatus.AwaitingProcessing));
     }
 
     const blocks = this.state.blocks;
@@ -142,7 +142,7 @@ export class Batch {
    */
   processingSuccess(): void {
     if (this.state.status !== BatchStatus.Processing) {
-      throw new WrongStateError(this.state.status, BatchStatus.Processing);
+      throw new WrongStateError(this.getErrorType(BatchStatus.Processing));
     }
 
     this.state = {status: BatchStatus.AwaitingValidation, attempt: this.state.attempt};
@@ -155,7 +155,7 @@ export class Batch {
     if (this.state.status === BatchStatus.Processing) {
       this.failedProcessingAttempts.push(this.state.attempt);
     } else {
-      this.logger.warn("processingError", {}, new WrongStateError(this.state.status, BatchStatus.Processing));
+      this.logger.warn("processingError", {}, new WrongStateError(this.getErrorType(BatchStatus.Processing)));
     }
 
     this.state = {status: BatchStatus.AwaitingDownload};
@@ -168,14 +168,22 @@ export class Batch {
     if (this.state.status === BatchStatus.AwaitingValidation) {
       this.failedProcessingAttempts.push(this.state.attempt);
     } else {
-      this.logger.warn("validationError", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingValidation));
+      this.logger.warn("validationError", {}, new WrongStateError(this.getErrorType(BatchStatus.AwaitingValidation)));
     }
 
     this.state = {status: BatchStatus.AwaitingDownload};
   }
-}
-class WrongStateError extends Error {
-  constructor(currentStatus: BatchStatus, expectedStatus: BatchStatus) {
-    super(`Wrong batch status ${currentStatus}, expected ${expectedStatus}`);
+
+  private getErrorType(expectedStatus: BatchStatus): BatchErrorType {
+    return {
+      code: "BATCH_ERROR_WRONG_STATUS",
+      id: this.id,
+      status: this.state.status,
+      expectedStatus,
+    };
   }
 }
+
+type BatchErrorType = {code: "BATCH_ERROR_WRONG_STATUS"; id: number; status: BatchStatus; expectedStatus: BatchStatus};
+
+class WrongStateError extends LodestarError<BatchErrorType> {}
