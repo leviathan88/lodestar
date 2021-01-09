@@ -109,14 +109,13 @@ export class Batch {
   }
 
   /**
-   * Downloading -> Failed
-   *             -> AwaitingDownload
+   * Downloading -> AwaitingDownload
    */
   downloadingError(): void {
-    if (this.state.status === BatchStatus.AwaitingProcessing) {
+    if (this.state.status === BatchStatus.Downloading) {
       this.failedDownloadAttempts.push(this.state.peer);
     } else {
-      this.logger.warn("downloadingError", {}, new WrongStateError(this.state.status, BatchStatus.AwaitingProcessing));
+      this.logger.warn("downloadingError", {}, new WrongStateError(this.state.status, BatchStatus.Downloading));
     }
 
     this.state = {status: BatchStatus.AwaitingDownload};
