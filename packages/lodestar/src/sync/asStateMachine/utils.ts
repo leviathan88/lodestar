@@ -38,8 +38,10 @@ export function hashBlocks(config: IBeaconConfig, blocks: SignedBeaconBlock[]): 
 // TODO: Include in chainSegment block processor
 export class BlockProcessorError extends Error {
   importedBlocks: SignedBeaconBlock[];
-  constructor(importedBlocks: SignedBeaconBlock[]) {
-    super();
+  error: Error;
+  constructor(error: Error, importedBlocks: SignedBeaconBlock[]) {
+    super(error.message);
     this.importedBlocks = importedBlocks;
+    this.error = error;
   }
 }

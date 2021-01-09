@@ -4,7 +4,14 @@ import {defaultSyncOptions, ISyncOptions} from "./options";
 import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {sleep} from "@chainsafe/lodestar-utils";
-import {CommitteeIndex, Root, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
+import {
+  BeaconBlocksByRangeRequest,
+  CommitteeIndex,
+  Root,
+  SignedBeaconBlock,
+  Slot,
+  SyncingStatus,
+} from "@chainsafe/lodestar-types";
 import {FastSync, InitialSync} from "./initial";
 import {IRegularSync} from "./regular";
 import {BeaconReqRespHandler, IReqRespHandler} from "./reqResp";
@@ -15,6 +22,9 @@ import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {List, toHexString} from "@chainsafe/ssz";
 import {BlockError, BlockErrorCode} from "../chain/errors";
 import {ORARegularSync} from "./regular/oneRangeAhead/oneRangeAhead";
+import {InitialSyncAsStateMachine} from "./asStateMachine/chain";
+import {getPeersInitialSync} from "./utils/bestPeers";
+import {BlockProcessorError} from "./asStateMachine/utils";
 
 export enum SyncMode {
   WAITING_PEERS,
@@ -69,10 +79,52 @@ export class BeaconSync implements IBeaconSync {
     if (this.mode === SyncMode.STOPPED) {
       return;
     }
+
+    const finalizedBlock = this.chain.forkChoice.getFinalizedBlock();
+    const startEpoch = finalizedBlock.finalizedEpoch;
+    const initialSync = new InitialSyncAsStateMachine(
+      startEpoch,
+      this.processChainSegment,
+      this.downloadBeaconBlocksByRange,
+      this.config,
+      this.logger
+    );
+
+    setInterval(() => {
+      const {checkpoint, peers} = getPeersInitialSync(this.network);
+      const targetEpoch = checkpoint.epoch;
+      this.logger.info("New peer set", {count: peers.length, targetEpoch});
+      initialSync.peerSetChanged({peers: peers.map((p) => p.peerId), targetEpoch});
+    }, 3000);
+
+    await initialSync.startSyncing(startEpoch);
+
     this.peerCountTimer = setInterval(this.logPeerCount, 3 * this.config.params.SECONDS_PER_SLOT * 1000);
     await this.startInitialSync();
     await this.startRegularSync();
   }
+
+  processChainSegment = async (blocks: SignedBeaconBlock[]): Promise<void> => {
+    const importedBlocks: SignedBeaconBlock[] = [];
+
+    try {
+      for (const block of blocks) {
+        const trusted = true; // TODO: Verify signatures
+        await this.chain.processBlockJob(block, trusted);
+        importedBlocks.push(block);
+      }
+    } catch (e) {
+      throw new BlockProcessorError(e, importedBlocks);
+    }
+  };
+
+  downloadBeaconBlocksByRange = async (
+    peerId: PeerId,
+    request: BeaconBlocksByRangeRequest
+  ): Promise<SignedBeaconBlock[]> => {
+    const blocks = await this.network.reqResp.beaconBlocksByRange(peerId, request);
+    return blocks || [];
+  };
 
   public async stop(): Promise<void> {
     this.network.removeListener(NetworkEvent.peerConnect, this.onPeerConnect);
