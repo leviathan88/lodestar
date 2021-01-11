@@ -296,12 +296,12 @@ export class InitialSyncAsStateMachine {
     }
 
     // Check if the chain has completed syncing
-    const lastFinalizedEpochBatch = batch.startEpoch + EPOCHS_PER_BATCH - 1;
-    if (this.peerSet && lastFinalizedEpochBatch >= this.peerSet.targetEpoch) {
+    const lastEpochBatch = batch.startEpoch + EPOCHS_PER_BATCH - 1;
+    if (this.peerSet && lastEpochBatch >= this.peerSet.targetEpoch) {
       this.batchProcessor.end();
       this.logger.important("Completed initial sync", {targetEpoch: this.peerSet.targetEpoch});
     } else {
-      this.logSyncProgress(lastFinalizedEpochBatch);
+      this.logSyncProgress(lastEpochBatch);
       this.triggerBatchDownloader();
       this.triggerBatchProcessor();
     }
@@ -364,16 +364,16 @@ export class InitialSyncAsStateMachine {
   /**
    * Register sync progress in TimeSeries instance and log current speed and time left
    */
-  private logSyncProgress(lastFinalizedEpoch: Epoch): void {
-    this.timeSeries.addPoint(lastFinalizedEpoch);
+  private logSyncProgress(epoch: Epoch): void {
+    this.timeSeries.addPoint(epoch);
 
     const targetEpoch = this.peerSet?.targetEpoch;
     if (!targetEpoch) return;
 
     const epochsPerSecond = this.timeSeries.computeLinearSpeed();
     const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
-    const hoursToGo = (targetEpoch - lastFinalizedEpoch) / (epochsPerSecond * 3600);
-    this.logger.info(`Sync progress ${lastFinalizedEpoch}/${targetEpoch}`, {
+    const hoursToGo = (targetEpoch - epoch) / (epochsPerSecond * 3600);
+    this.logger.info(`Sync progress ${epoch}/${targetEpoch}`, {
       slotsPerSecond: slotsPerSecond.toPrecision(3),
       hoursLeft: hoursToGo.toPrecision(3),
     });
