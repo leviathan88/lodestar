@@ -34,14 +34,3 @@ export function hashBlocks(config: IBeaconConfig, blocks: SignedBeaconBlock[]): 
   const hashes = blocks.map((block) => config.types.SignedBeaconBlock.hashTreeRoot(block));
   return Buffer.concat(hashes);
 }
-
-// TODO: Include in chainSegment block processor
-export class BlockProcessorError extends Error {
-  importedBlocks: SignedBeaconBlock[];
-  error: Error;
-  constructor(error: Error, importedBlocks: SignedBeaconBlock[]) {
-    super(error.message);
-    this.importedBlocks = importedBlocks;
-    this.error = error;
-  }
-}

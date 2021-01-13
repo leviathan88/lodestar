@@ -5,7 +5,8 @@ import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {itTrigger} from "../../util/it-trigger";
 import {TimeSeries} from "../stats/timeSeries";
 import {Batch, BatchMetadata, BatchStatus} from "./batch";
-import {shuffle, sortBy, BlockProcessorError} from "./utils";
+import {shuffle, sortBy} from "./utils";
+import {BlockProcessorError} from "../../chain/errors";
 
 /**
  * Should return if ALL blocks are processed successfully
@@ -348,7 +349,7 @@ export class InitialSyncAsStateMachine {
 
     // At least one block was successfully verified and imported, so we can be sure all
     // previous batches are valid and we only need to download the current failed batch.
-    if (error instanceof BlockProcessorError && error.importedBlocks.length > 0) {
+    if (error instanceof BlockProcessorError && error.importedJobs.length > 0) {
       this.advanceChain(batch.startEpoch);
     }
 

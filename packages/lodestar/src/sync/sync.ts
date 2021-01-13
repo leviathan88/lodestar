@@ -4,7 +4,7 @@ import {defaultSyncOptions, ISyncOptions} from "./options";
 import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {sleep} from "@chainsafe/lodestar-utils";
-import {CommitteeIndex, Root, SignedBeaconBlock, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
+import {CommitteeIndex, Root, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
 import {FastSync, InitialSync} from "./initial";
 import {IRegularSync} from "./regular";
 import {BeaconReqRespHandler, IReqRespHandler} from "./reqResp";
@@ -22,7 +22,6 @@ import {
   GetPeerSet,
 } from "./asStateMachine/chain";
 import {getPeersInitialSync} from "./utils/bestPeers";
-import {BlockProcessorError} from "./asStateMachine/utils";
 
 export enum SyncMode {
   WAITING_PEERS,
@@ -97,25 +96,10 @@ export class BeaconSync implements IBeaconSync {
   }
 
   processChainSegment: ProcessChainSegment = async (blocks) => {
-    const importedBlocks: SignedBeaconBlock[] = [];
+    // Should ignore already known block error
 
-    try {
-      for (const block of blocks) {
-        try {
-          const trusted = true; // TODO: Verify signatures
-          await this.chain.processBlockJob(block, trusted);
-        } catch (e) {
-          if (e instanceof BlockError && e.type.code === BlockErrorCode.BLOCK_IS_ALREADY_KNOWN) {
-            this.logger.info("Chain segment block is already imported", {slot: block.message.slot});
-          } else {
-            throw e;
-          }
-        }
-        importedBlocks.push(block);
-      }
-    } catch (e) {
-      throw new BlockProcessorError(e, importedBlocks);
-    }
+    const trusted = true; // TODO: Verify signatures
+    await this.chain.processChainSegment(blocks, trusted);
   };
 
   downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange = async (peerId, request) => {

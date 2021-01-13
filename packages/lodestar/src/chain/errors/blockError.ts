@@ -104,15 +104,21 @@ export type BlockErrorType =
   | {code: BlockErrorCode.BEACON_CHAIN_ERROR; error: Error}
   | {code: BlockErrorCode.KNOWN_BAD_BLOCK};
 
-type JobObject = {
-  job: IBlockJob;
-};
-
 export class BlockError extends LodestarError<BlockErrorType> {
   public job: IBlockJob;
 
-  constructor({job, ...type}: BlockErrorType & JobObject) {
+  constructor({job, ...type}: BlockErrorType & {job: IBlockJob}) {
     super(type);
     this.job = job;
+  }
+}
+
+export type BlockProcessorErrorType = BlockErrorType & {importedJobs: IBlockJob[]};
+
+export class BlockProcessorError extends BlockError {
+  importedJobs: IBlockJob[];
+  constructor(type: BlockErrorType, job: IBlockJob, importedJobs: IBlockJob[]) {
+    super({...type, job});
+    this.importedJobs = importedJobs;
   }
 }
