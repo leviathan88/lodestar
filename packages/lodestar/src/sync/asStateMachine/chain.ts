@@ -47,6 +47,7 @@ export class InitialSyncAsStateMachine {
   private batchProcessor = itTrigger();
   /** Sorted map of batches undergoing some kind of processing. */
   private batches: Map<Epoch, Batch> = new Map();
+  private peerIdString: WeakMap<PeerId, string> = new WeakMap();
   /** Dynamic targetEpoch with associated peers. May be `null`ed if no suitable peer set exists */
   private peerSet: FinalizedCheckpointPeerSet | null = null;
   private timeSeries = new TimeSeries({maxPoints: 1000});
@@ -154,11 +155,11 @@ export class InitialSyncAsStateMachine {
       }
 
       // Sort peers by (1) no failed request (2) less active requests, then pick first
-      const failedPeers = batch.getFailedPeers();
+      const failedPeers = batch.getFailedPeers().map((peer) => this.getPeerIdString(peer));
       const [peer] = sortBy(
         peers,
-        (peer) => (failedPeers.includes(peer) ? 1 : 0),
-        (peer) => activeRequestsByPeer.get(peer) ?? 0
+        (peer) => (failedPeers.includes(this.getPeerIdString(peer)) ? 1 : 0),
+        (peer) => activeRequestsByPeer.get(this.getPeerIdString(peer)) ?? 0
       );
       if (peer) {
         void this.sendBatch(batch, peer);
@@ -166,7 +167,7 @@ export class InitialSyncAsStateMachine {
     }
 
     // find the next pending batch and request it from the peer. Shuffle peers for load balancing
-    const idlePeers = shuffle(peers.filter((peer) => !activeRequestsByPeer.get(peer)));
+    const idlePeers = shuffle(peers.filter((peer) => !activeRequestsByPeer.get(this.getPeerIdString(peer))));
     for (const peer of idlePeers) {
       const batch = this.includeNextBatch(targetEpoch);
       if (!batch) {
@@ -176,14 +177,30 @@ export class InitialSyncAsStateMachine {
     }
   }
 
-  private getActiveRequestsByPeer(): WeakMap<PeerId, number> {
-    const activeRequestsByPeer = new WeakMap<PeerId, number>();
+  /**
+   * Compute activeRequestsByPeer from this.batch internal states
+   */
+  private getActiveRequestsByPeer(): Map<string, number> {
+    const activeRequestsByPeer = new Map<string, number>();
     for (const batch of this.batches.values()) {
       if (batch.state.status === BatchStatus.Downloading) {
-        activeRequestsByPeer.set(batch.state.peer, (activeRequestsByPeer.get(batch.state.peer) ?? 0) + 1);
+        const peerIdString = this.getPeerIdString(batch.state.peer);
+        activeRequestsByPeer.set(peerIdString, (activeRequestsByPeer.get(peerIdString) ?? 0) + 1);
       }
     }
     return activeRequestsByPeer;
+  }
+
+  /**
+   * Caches peerId.toB58String result in a WeakMap
+   */
+  private getPeerIdString(peerId: PeerId): string {
+    let peerIdString = this.peerIdString.get(peerId);
+    if (!peerIdString) {
+      peerIdString = peerId.toB58String();
+      this.peerIdString.set(peerId, peerIdString);
+    }
+    return peerIdString;
   }
 
   /**
