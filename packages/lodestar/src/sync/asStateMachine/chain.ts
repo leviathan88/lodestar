@@ -98,7 +98,18 @@ export class InitialSyncAsStateMachine {
 
     // Start processing batches on demand in strict sequence
     for await (const _ of this.batchProcessor) {
-      await this.processCompletedBatches();
+      const result = await this.processCompletedBatches();
+      switch (result) {
+        case ProcessorAction.ProcessNext:
+          this.triggerBatchProcessor();
+          break;
+        case ProcessorAction.Done:
+          return;
+        case ProcessorAction.NoProcessingReady:
+          // When here, there must be at least one batch available to reach sendBatch() success so
+          // it can trigger the processor again
+          break;
+      }
     }
   }
 
@@ -150,7 +161,7 @@ export class InitialSyncAsStateMachine {
         (peer) => activeRequestsByPeer.get(peer) ?? 0
       );
       if (peer) {
-        this.sendBatch(batch, peer);
+        void this.sendBatch(batch, peer);
       }
     }
 
@@ -161,7 +172,7 @@ export class InitialSyncAsStateMachine {
       if (!batch) {
         break;
       }
-      this.sendBatch(batch, peer);
+      void this.sendBatch(batch, peer);
     }
   }
 
@@ -209,30 +220,29 @@ export class InitialSyncAsStateMachine {
   /**
    * Requests the batch asigned to the given id from a given peer.
    */
-  private sendBatch(batch: Batch, peer: PeerId): void {
+  private async sendBatch(batch: Batch, peer: PeerId): Promise<void> {
     // Inform the batch about the new request
     this.logger.info("Downloading batch", batch.getMetadata());
     batch.startDownloading(peer);
 
-    this.downloadBeaconBlocksByRange(peer, batch.request)
-      .then((blocks) => {
-        // TODO: verify that blocks are in range
-        // TODO: verify that blocks are sequential
+    try {
+      const blocks = await this.downloadBeaconBlocksByRange(peer, batch.request);
 
-        this.logger.info("Downloaded batch", batch.getMetadata());
-        batch.downloadingSuccess(blocks || []);
+      // TODO: verify that blocks are in range
+      // TODO: verify that blocks are sequential
 
-        // Pre-emptively request more blocks from peers whilst we process current blocks
-        this.triggerBatchDownloader();
-        this.triggerBatchProcessor();
-      })
-      .catch((error) => {
-        // Register the download error and check if the batch can be retried
-        this.logger.error("Downloaded batch error", batch.getMetadata(), error);
-        batch.downloadingError();
+      this.logger.info("Downloaded batch", batch.getMetadata());
+      batch.downloadingSuccess(blocks || []);
 
-        this.triggerBatchDownloader();
-      });
+      this.triggerBatchProcessor();
+    } catch (e) {
+      // Register the download error and check if the batch can be retried
+      this.logger.error("Downloaded batch error", batch.getMetadata(), e);
+      batch.downloadingError();
+    } finally {
+      // Pre-emptively request more blocks from peers whilst we process current blocks
+      this.triggerBatchDownloader();
+    }
   }
 
   //
@@ -242,7 +252,7 @@ export class InitialSyncAsStateMachine {
   /**
    * Processes the next ready batch if any
    */
-  private async processCompletedBatches(): Promise<void> {
+  private async processCompletedBatches(): Promise<ProcessorAction> {
     // ES6 Map MUST guarantee insertion order so older batches are processed first
     for (const batch of this.batches.values()) {
       switch (batch.state.status) {
@@ -257,19 +267,21 @@ export class InitialSyncAsStateMachine {
         case BatchStatus.AwaitingDownload:
         case BatchStatus.Downloading:
         case BatchStatus.Processing:
-          return;
+          return ProcessorAction.NoProcessingReady;
       }
     }
 
     // TODO: Validate that the current batches status make sense, to hopefully recover from dead ends
     // i.e. If all states are in AwaitingValidation status, `this.batches.clear()`
     this.logger.error("Error: all batches are in AwaitingValidation state, should not happen");
+
+    return ProcessorAction.NoProcessingReady;
   }
 
   /**
    * Sends to process the batch
    */
-  private async processBatch(batch: Batch): Promise<void> {
+  private async processBatch(batch: Batch): Promise<ProcessorAction> {
     try {
       this.logger.info("Processing batch", batch.getMetadata());
       const blocks = batch.startProcessing();
@@ -278,16 +290,15 @@ export class InitialSyncAsStateMachine {
       await this.processChainSegment(blocks);
 
       this.logger.info("Processed batch", batch.getMetadata());
-      this.onProcessedBatchSuccess(batch, blocks);
+      return this.onProcessedBatchSuccess(batch, blocks);
     } catch (error) {
-      this.logger.error("Process batch error", batch.getMetadata(), error);
-
       // Handle this invalid batch, that is within the re-process retries limit.
-      this.onProcessedBatchError(batch, error);
+      this.logger.error("Process batch error", batch.getMetadata(), error);
+      return this.onProcessedBatchError(batch, error);
     }
   }
 
-  private onProcessedBatchSuccess(batch: Batch, blocks: SignedBeaconBlock[]): void {
+  private onProcessedBatchSuccess(batch: Batch, blocks: SignedBeaconBlock[]): ProcessorAction {
     batch.processingSuccess();
 
     // If the processed batch was not empty, we can validate previous unvalidated blocks.
@@ -298,19 +309,20 @@ export class InitialSyncAsStateMachine {
     // Check if the chain has completed syncing
     const lastEpochBatch = batch.startEpoch + EPOCHS_PER_BATCH - 1;
     if (this.peerSet && lastEpochBatch >= this.peerSet.targetEpoch) {
-      this.batchProcessor.end();
       this.logger.important("Completed initial sync", {targetEpoch: this.peerSet.targetEpoch});
+      return ProcessorAction.Done;
     } else {
       this.logSyncProgress(lastEpochBatch);
+      // A batch is no longer in Processing status, queue has an empty spot to download next batch
       this.triggerBatchDownloader();
-      this.triggerBatchProcessor();
+      return ProcessorAction.ProcessNext;
     }
   }
 
   /**
    * An invalid batch has been received that could not be processed, but that can be retried.
    */
-  private onProcessedBatchError(batch: Batch, error: Error): void {
+  private onProcessedBatchError(batch: Batch, error: Error): ProcessorAction {
     batch.processingError();
 
     // At least one block was successfully verified and imported, so we can be sure all
@@ -331,7 +343,9 @@ export class InitialSyncAsStateMachine {
       }
     }
 
+    // Re-download failed batches
     this.triggerBatchDownloader();
+    return ProcessorAction.NoProcessingReady;
   }
 
   /**
@@ -378,4 +392,10 @@ export class InitialSyncAsStateMachine {
       hoursLeft: hoursToGo.toPrecision(3),
     });
   }
+}
+
+enum ProcessorAction {
+  NoProcessingReady,
+  Done,
+  ProcessNext,
 }
