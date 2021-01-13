@@ -4,14 +4,7 @@ import {defaultSyncOptions, ISyncOptions} from "./options";
 import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {sleep} from "@chainsafe/lodestar-utils";
-import {
-  BeaconBlocksByRangeRequest,
-  CommitteeIndex,
-  Root,
-  SignedBeaconBlock,
-  Slot,
-  SyncingStatus,
-} from "@chainsafe/lodestar-types";
+import {CommitteeIndex, Root, SignedBeaconBlock, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
 import {FastSync, InitialSync} from "./initial";
 import {IRegularSync} from "./regular";
 import {BeaconReqRespHandler, IReqRespHandler} from "./reqResp";
@@ -22,7 +15,12 @@ import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {List, toHexString} from "@chainsafe/ssz";
 import {BlockError, BlockErrorCode} from "../chain/errors";
 import {ORARegularSync} from "./regular/oneRangeAhead/oneRangeAhead";
-import {InitialSyncAsStateMachine} from "./asStateMachine/chain";
+import {
+  InitialSyncAsStateMachine,
+  ProcessChainSegment,
+  DownloadBeaconBlocksByRange,
+  GetPeerSet,
+} from "./asStateMachine/chain";
 import {getPeersInitialSync} from "./utils/bestPeers";
 import {BlockProcessorError} from "./asStateMachine/utils";
 
@@ -86,27 +84,19 @@ export class BeaconSync implements IBeaconSync {
       startEpoch,
       this.processChainSegment,
       this.downloadBeaconBlocksByRange,
+      this.getPeerSet,
       this.config,
       this.logger
     );
 
-    // TODO: Figure out a non-shitty way to inject peers into InitialSyncAsStateMachine
-    const interval = setInterval(() => {
-      const {checkpoint, peers} = getPeersInitialSync(this.network);
-      const targetEpoch = checkpoint.epoch;
-      this.logger.info("New peer set", {count: peers.length, targetEpoch});
-      initialSync.peerSetChanged({peers: peers.map((p) => p.peerId), targetEpoch});
-    }, 3000);
-
     await initialSync.startSyncing();
-    clearInterval(interval);
 
     this.peerCountTimer = setInterval(this.logPeerCount, 3 * this.config.params.SECONDS_PER_SLOT * 1000);
     await this.startInitialSync();
     await this.startRegularSync();
   }
 
-  processChainSegment = async (blocks: SignedBeaconBlock[]): Promise<void> => {
+  processChainSegment: ProcessChainSegment = async (blocks) => {
     const importedBlocks: SignedBeaconBlock[] = [];
 
     try {
@@ -128,12 +118,16 @@ export class BeaconSync implements IBeaconSync {
     }
   };
 
-  downloadBeaconBlocksByRange = async (
-    peerId: PeerId,
-    request: BeaconBlocksByRangeRequest
-  ): Promise<SignedBeaconBlock[]> => {
+  downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange = async (peerId, request) => {
     const blocks = await this.network.reqResp.beaconBlocksByRange(peerId, request);
     return blocks || [];
+  };
+
+  getPeerSet: GetPeerSet = () => {
+    const {checkpoint, peers} = getPeersInitialSync(this.network);
+    const targetEpoch = checkpoint.epoch;
+    this.logger.info("New peer set", {count: peers.length, targetEpoch});
+    return {peers: peers.map((p) => p.peerId), targetEpoch};
   };
 
   public async stop(): Promise<void> {

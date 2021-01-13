@@ -11,9 +11,24 @@ import {shuffle, sortBy, BlockProcessorError} from "./utils";
  * Should return if ALL blocks are processed successfully
  * If SOME blocks are processed must throw BlockProcessorError()
  */
-type ProcessChainSegment = (blocks: SignedBeaconBlock[]) => Promise<void>;
+export type ProcessChainSegment = (blocks: SignedBeaconBlock[]) => Promise<void>;
 
-type DownloadBeaconBlocksByRange = (peer: PeerId, request: BeaconBlocksByRangeRequest) => Promise<SignedBeaconBlock[]>;
+export type DownloadBeaconBlocksByRange = (
+  peer: PeerId,
+  request: BeaconBlocksByRangeRequest
+) => Promise<SignedBeaconBlock[]>;
+
+/**
+ * The SyncManager should dynamically inject pools of peers and their targetEpoch through this method.
+ * It may inject `null` if the peer pool does not meet some condition like peers < minPeers, which
+ * would temporarily pause the sync once all active requests are done.
+ */
+export type GetPeerSet = () => FinalizedCheckpointPeerSet | null;
+
+type FinalizedCheckpointPeerSet = {
+  peers: PeerId[];
+  targetEpoch: Epoch;
+};
 
 /**
  * Blocks are downloaded in batches from peers. This constant specifies how many epochs worth of
@@ -30,11 +45,6 @@ const EPOCHS_PER_BATCH = 2;
  */
 const BATCH_BUFFER_SIZE = 5;
 
-type FinalizedCheckpointPeerSet = {
-  peers: PeerId[];
-  targetEpoch: Epoch;
-};
-
 export class InitialSyncAsStateMachine {
   /** The start of the chain segment. Any epoch previous to this one has been validated. */
   validatedEpoch: Epoch;
@@ -43,6 +53,7 @@ export class InitialSyncAsStateMachine {
   /** A multi-threaded, non-blocking processor for applying messages to the beacon chain. */
   private processChainSegment: ProcessChainSegment;
   private downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange;
+  private getPeerSet: GetPeerSet;
   /** Puhasble object to guarantee that processChainSegment is run only at once at anytime */
   private batchProcessor = itTrigger();
   /** Sorted map of batches undergoing some kind of processing. */
@@ -58,11 +69,13 @@ export class InitialSyncAsStateMachine {
     localFinalizedEpoch: Epoch,
     processChainSegment: ProcessChainSegment,
     downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange,
+    getPeerSet: GetPeerSet,
     config: IBeaconConfig,
     logger: ILogger
   ) {
     this.processChainSegment = processChainSegment;
     this.downloadBeaconBlocksByRange = downloadBeaconBlocksByRange;
+    this.getPeerSet = getPeerSet;
     this.config = config;
     this.logger = logger;
 
@@ -70,16 +83,6 @@ export class InitialSyncAsStateMachine {
     this.validatedEpoch =
       localFinalizedEpoch +
       Math.floor((localFinalizedEpoch - localFinalizedEpoch) / EPOCHS_PER_BATCH) * EPOCHS_PER_BATCH;
-  }
-
-  /**
-   * The SyncManager should dynamically inject pools of peers and their targetEpoch through this method.
-   * It may inject `null` if the peer pool does not meet some condition like peers < minPeers, which
-   * would temporarily pause the sync once all active requests are done.
-   */
-  peerSetChanged(peerSet: FinalizedCheckpointPeerSet | null): void {
-    this.peerSet = peerSet;
-    this.triggerBatchDownloader();
   }
 
   /**
@@ -131,7 +134,8 @@ export class InitialSyncAsStateMachine {
    * Backlogs requests into a single pending request
    */
   private triggerBatchDownloader(): void {
-    if (this.peerSet) this.requestBatches(this.peerSet);
+    const peerSet = this.getPeerSet();
+    if (peerSet) this.requestBatches(peerSet);
   }
 
   //
