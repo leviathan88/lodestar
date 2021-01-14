@@ -106,7 +106,6 @@ export class InitialSyncAsStateMachine {
   async startSyncing(): Promise<void> {
     this.syncEventBus.on(SyncEvent.peerConnect, this.onPeerConnect);
 
-    this.triggerBatchProcessor();
     this.triggerBatchDownloader();
 
     // Start processing batches on demand in strict sequence
