@@ -98,7 +98,11 @@ export class BeaconSync implements IBeaconSync {
   }
 
   processChainSegment: ProcessChainSegment = async (blocks) => {
-    // Should ignore already known block error
+    // MUST ignore already known blocks
+    // TODO: Is there a way to ignore specifically the BLOCK_IS_ALREADY_KNOWN error on a segment?
+    blocks = blocks.filter(
+      (block) => !this.chain.forkChoice.hasBlock(this.config.types.BeaconBlock.hashTreeRoot(block.message))
+    );
 
     const trusted = true; // TODO: Verify signatures
     await this.chain.processChainSegment(blocks, trusted);
@@ -194,7 +198,6 @@ export class BeaconSync implements IBeaconSync {
     try {
       const peerStatus = await this.network.reqResp.status(peerId, localStatus);
       this.network.peerMetadata.setStatus(peerId, peerStatus);
-      this.logger.info("Peer connected!");
       this.syncEventBus.emit(SyncEvent.peerConnect, peerId);
     } catch (e) {
       this.logger.verbose("Failed to get peer latest status and metadata", {
