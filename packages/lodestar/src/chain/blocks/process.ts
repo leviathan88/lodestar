@@ -21,6 +21,10 @@ export async function processBlocks({
   db: IBeaconDb;
   jobs: IBlockJob[];
 }): Promise<void> {
+  if (jobs.length === 0) {
+    return; // No jobs to process
+  }
+
   let preStateContext: ITreeStateContext;
   try {
     preStateContext = await regen.getPreState(jobs[0].signedBlock.message);

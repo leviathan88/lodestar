@@ -17,9 +17,23 @@ export async function validateBlocks({
   clock: IBeaconClock;
   jobs: IBlockJob[];
 }): Promise<void> {
-  if (!jobs || !jobs.length) throw new Error("No block job to validate");
-  const ancestorRoot = jobs[0].signedBlock.message.parentRoot;
-  let parentRoot = ancestorRoot;
+  if (jobs.length === 0) {
+    return; // No jobs to validate
+  }
+
+  // only validate PARENT_UNKNOWN condition for 1st block
+  const firstJob = jobs[0];
+  const firstJobAncestorRoot = firstJob.signedBlock.message.parentRoot;
+  if (!forkChoice.hasBlock(firstJobAncestorRoot)) {
+    throw new BlockError({
+      code: BlockErrorCode.PARENT_UNKNOWN,
+      parentRoot: firstJobAncestorRoot.valueOf() as Uint8Array,
+      job: firstJob,
+    });
+  }
+
+  let parentRoot = firstJobAncestorRoot;
+
   for (const job of jobs) {
     try {
       const blockHash = config.types.BeaconBlock.hashTreeRoot(job.signedBlock.message);
@@ -66,6 +80,7 @@ export async function validateBlocks({
           job,
         });
       }
+
       parentRoot = blockHash;
     } catch (e) {
       if (e instanceof BlockError) {
@@ -78,14 +93,5 @@ export async function validateBlocks({
         job,
       });
     }
-  }
-
-  // only validate PARENT_UNKNOWN condition for 1st block
-  if (!forkChoice.hasBlock(ancestorRoot)) {
-    throw new BlockError({
-      code: BlockErrorCode.PARENT_UNKNOWN,
-      parentRoot: jobs[0].signedBlock.message.parentRoot.valueOf() as Uint8Array,
-      job: jobs[0],
-    });
   }
 }

@@ -322,7 +322,9 @@ export class InitialSyncAsStateMachine {
       const blocks = batch.startProcessing();
 
       // Okay to process empty batches since they can be validated by next batches
-      await this.processChainSegment(blocks);
+      if (blocks.length > 0) {
+        await this.processChainSegment(blocks);
+      }
 
       this.logger.info("Processed batch", batch.getMetadata());
       return this.onProcessedBatchSuccess(batch, blocks);
