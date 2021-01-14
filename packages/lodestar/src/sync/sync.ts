@@ -22,6 +22,7 @@ import {
   GetPeerSet,
 } from "./asStateMachine/chain";
 import {getPeersInitialSync} from "./utils/bestPeers";
+import {SyncEvent, SyncEventBus} from "./events";
 
 export enum SyncMode {
   WAITING_PEERS,
@@ -44,6 +45,7 @@ export class BeaconSync implements IBeaconSync {
   private reqResp: IReqRespHandler;
   private gossip: IGossipHandler;
   private attestationCollector: AttestationCollector;
+  private syncEventBus = new SyncEventBus();
 
   private statusSyncTimer?: NodeJS.Timeout;
   private peerCountTimer?: NodeJS.Timeout;
@@ -71,8 +73,7 @@ export class BeaconSync implements IBeaconSync {
     this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
     await this.reqResp.start();
     await this.attestationCollector.start();
-    // so we don't wait indefinitely
-    await this.waitForPeers();
+
     if (this.mode === SyncMode.STOPPED) {
       return;
     }
@@ -84,6 +85,7 @@ export class BeaconSync implements IBeaconSync {
       this.processChainSegment,
       this.downloadBeaconBlocksByRange,
       this.getPeerSet,
+      this.syncEventBus,
       this.config,
       this.logger
     );
@@ -108,10 +110,19 @@ export class BeaconSync implements IBeaconSync {
   };
 
   getPeerSet: GetPeerSet = () => {
-    const {checkpoint, peers} = getPeersInitialSync(this.network);
-    const targetEpoch = checkpoint.epoch;
-    this.logger.info("New peer set", {count: peers.length, targetEpoch});
-    return {peers: peers.map((p) => p.peerId), targetEpoch};
+    const minPeers = this.opts.minPeers ?? defaultSyncOptions.minPeers;
+    const peerSet = getPeersInitialSync(this.network);
+    if (!peerSet) {
+      this.logger.info("No peers found");
+      return null;
+    } else if (peerSet.peers.length < minPeers) {
+      this.logger.info(`Waiting for minPeers: ${peerSet.peers.length}/${minPeers}`);
+      return null;
+    } else {
+      const targetEpoch = peerSet.checkpoint.epoch;
+      this.logger.info("New peer set", {count: peerSet.peers.length, targetEpoch});
+      return {peers: peerSet.peers.map((p) => p.peerId), targetEpoch};
+    }
   };
 
   public async stop(): Promise<void> {
@@ -183,6 +194,8 @@ export class BeaconSync implements IBeaconSync {
     try {
       const peerStatus = await this.network.reqResp.status(peerId, localStatus);
       this.network.peerMetadata.setStatus(peerId, peerStatus);
+      this.logger.info("Peer connected!");
+      this.syncEventBus.emit(SyncEvent.peerConnect, peerId);
     } catch (e) {
       this.logger.verbose("Failed to get peer latest status and metadata", {
         peerId: peerId.toB58String(),

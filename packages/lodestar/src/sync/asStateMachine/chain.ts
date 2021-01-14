@@ -7,6 +7,7 @@ import {TimeSeries} from "../stats/timeSeries";
 import {Batch, BatchMetadata, BatchStatus} from "./batch";
 import {shuffle, sortBy} from "./utils";
 import {BlockProcessorError} from "../../chain/errors";
+import {SyncEventBus, SyncEvent} from "../events";
 
 /**
  * Should return if ALL blocks are processed successfully
@@ -60,6 +61,9 @@ export class InitialSyncAsStateMachine {
   /** Sorted map of batches undergoing some kind of processing. */
   private batches: Map<Epoch, Batch> = new Map();
   private peerIdString: WeakMap<PeerId, string> = new WeakMap();
+
+  private syncEventBus: SyncEventBus;
+
   /** Dynamic targetEpoch with associated peers. May be `null`ed if no suitable peer set exists */
   private peerSet: FinalizedCheckpointPeerSet | null = null;
   private timeSeries = new TimeSeries({maxPoints: 1000});
@@ -71,12 +75,14 @@ export class InitialSyncAsStateMachine {
     processChainSegment: ProcessChainSegment,
     downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange,
     getPeerSet: GetPeerSet,
+    syncEventBus: SyncEventBus,
     config: IBeaconConfig,
     logger: ILogger
   ) {
     this.processChainSegment = processChainSegment;
     this.downloadBeaconBlocksByRange = downloadBeaconBlocksByRange;
     this.getPeerSet = getPeerSet;
+    this.syncEventBus = syncEventBus;
     this.config = config;
     this.logger = logger;
 
@@ -98,6 +104,8 @@ export class InitialSyncAsStateMachine {
    * i.e. when it successfully processes a epoch >= than this chain `targetEpoch`
    */
   async startSyncing(): Promise<void> {
+    this.syncEventBus.on(SyncEvent.peerConnect, this.onPeerConnect);
+
     this.triggerBatchProcessor();
     this.triggerBatchDownloader();
 
@@ -119,9 +127,15 @@ export class InitialSyncAsStateMachine {
   }
 
   stopSyncing(): void {
+    this.syncEventBus.off(SyncEvent.peerConnect, this.onPeerConnect);
+
     this.batchProcessor.end();
     this.timeSeries.clear();
   }
+
+  onPeerConnect = (): void => {
+    this.triggerBatchDownloader();
+  };
 
   /**
    * Request to process batches if any

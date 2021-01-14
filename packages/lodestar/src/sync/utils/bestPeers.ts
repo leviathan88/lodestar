@@ -30,7 +30,7 @@ function getPeersThatSupportSync(network: INetwork): IPeerWithMetadata[] {
  * - their score > minScore
  * - status = most common finalied checkpoint
  */
-export function getPeersInitialSync(network: INetwork, minScore = 60): IPeersByCheckpoint<Checkpoint> {
+export function getPeersInitialSync(network: INetwork, minScore = 60): IPeersByCheckpoint<Checkpoint> | null {
   const peers = getPeersThatSupportSync(network);
   const goodPeers = peers.filter((peer) => peer.score > minScore);
   return getPeersByMostCommonFinalizedCheckpoint(goodPeers);
@@ -77,7 +77,9 @@ export function getGoodPeersToSyncFrom(network: INetwork, ourHeadSlot: Slot, min
  *
  * Returns both the most common finalized checkpoint and the group or peers who agree on it
  */
-export function getPeersByMostCommonFinalizedCheckpoint(peers: IPeerWithMetadata[]): IPeersByCheckpoint<Checkpoint> {
+export function getPeersByMostCommonFinalizedCheckpoint(
+  peers: IPeerWithMetadata[]
+): IPeersByCheckpoint<Checkpoint> | null {
   const peersByCheckpoint = groupPeersByCheckpoint(
     peers,
     (peer) => ({epoch: peer.status.finalizedEpoch, root: peer.status.finalizedRoot}),
@@ -93,7 +95,7 @@ export function getPeersByMostCommonFinalizedCheckpoint(peers: IPeerWithMetadata
   });
 
   const mostCommon = sortedByMostCommon[0];
-  if (!mostCommon) throw Error("No peers found");
+  if (!mostCommon) return null;
 
   return {
     checkpoint: mostCommon.checkpoint,
