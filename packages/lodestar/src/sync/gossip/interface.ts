@@ -1,5 +1,11 @@
-import {IService} from "../../node";
+export enum GossipStatus {
+  STARTED,
+  STOPPED,
+}
 
-export type IGossipHandler = IService & {
+export type IGossipHandler = {
+  status: GossipStatus;
+  start(): Promise<void>;
+  stop(): void;
   handleSyncCompleted(): void;
 };

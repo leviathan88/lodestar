@@ -1,5 +1,6 @@
 import PeerId from "peer-id";
-import {BeaconBlocksByRangeRequest, Epoch, SignedBeaconBlock} from "@chainsafe/lodestar-types";
+import {AbortSignal} from "abort-controller";
+import {BeaconBlocksByRangeRequest, Epoch, SignedBeaconBlock, Slot} from "@chainsafe/lodestar-types";
 import {ILogger} from "@chainsafe/lodestar-utils";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {itTrigger} from "../../util/it-trigger";
@@ -69,15 +70,16 @@ export class InitialSyncAsStateMachine {
   private timeSeries = new TimeSeries({maxPoints: 1000});
   private logger: ILogger;
   private config: IBeaconConfig;
+  private signal: AbortSignal;
 
   constructor(
-    localFinalizedEpoch: Epoch,
     processChainSegment: ProcessChainSegment,
     downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange,
     getPeerSet: GetPeerSet,
     syncEventBus: SyncEventBus,
     config: IBeaconConfig,
-    logger: ILogger
+    logger: ILogger,
+    signal: AbortSignal
   ) {
     this.processChainSegment = processChainSegment;
     this.downloadBeaconBlocksByRange = downloadBeaconBlocksByRange;
@@ -85,11 +87,9 @@ export class InitialSyncAsStateMachine {
     this.syncEventBus = syncEventBus;
     this.config = config;
     this.logger = logger;
+    this.signal = signal;
 
-    // Get the *aligned* epoch that produces a batch containing the `localFinalizedEpoch`
-    this.validatedEpoch =
-      localFinalizedEpoch +
-      Math.floor((localFinalizedEpoch - localFinalizedEpoch) / EPOCHS_PER_BATCH) * EPOCHS_PER_BATCH;
+    this.signal.addEventListener("abort", () => this.stopSyncing());
   }
 
   /**
@@ -103,36 +103,41 @@ export class InitialSyncAsStateMachine {
    * Main Promise that handles the sync process. Will resolve when initial sync completes
    * i.e. when it successfully processes a epoch >= than this chain `targetEpoch`
    */
-  async startSyncing(): Promise<void> {
+  async startSyncing(localFinalizedEpoch: Epoch): Promise<void> {
     this.syncEventBus.on(SyncEvent.peerConnect, this.onPeerConnect);
+
+    // Get the *aligned* epoch that produces a batch containing the `localFinalizedEpoch`
+    this.validatedEpoch =
+      localFinalizedEpoch +
+      Math.floor((localFinalizedEpoch - localFinalizedEpoch) / EPOCHS_PER_BATCH) * EPOCHS_PER_BATCH;
 
     this.triggerBatchDownloader();
 
+    let interval: NodeJS.Timeout | null = null;
+
     // Start processing batches on demand in strict sequence
     for await (const _ of this.batchProcessor) {
-      const result = await this.processCompletedBatches();
-      switch (result) {
-        case ProcessorAction.ProcessNext:
-          this.triggerBatchProcessor();
-          break;
-        case ProcessorAction.Done:
-          return;
-        case ProcessorAction.NoProcessingReady:
-          // When here, there must be at least one batch available to reach sendBatch() success so
-          // it can trigger the processor again
-          break;
-      }
+      if (interval) clearInterval(interval);
+      interval = setInterval(this.syncMaybeStuck, 10 * 1000);
+
+      await this.processCompletedBatches();
     }
+
+    if (interval) clearInterval(interval);
   }
 
   stopSyncing(): void {
     this.syncEventBus.off(SyncEvent.peerConnect, this.onPeerConnect);
-
     this.batchProcessor.end();
     this.timeSeries.clear();
   }
 
   onPeerConnect = (): void => {
+    this.triggerBatchDownloader();
+  };
+
+  private syncMaybeStuck = (): void => {
+    this.logger.warn("Initial sync might be stuck");
     this.triggerBatchDownloader();
   };
 
@@ -287,7 +292,7 @@ export class InitialSyncAsStateMachine {
   /**
    * Processes the next ready batch if any
    */
-  private async processCompletedBatches(): Promise<ProcessorAction> {
+  private async processCompletedBatches(): Promise<void> {
     // ES6 Map MUST guarantee insertion order so older batches are processed first
     for (const batch of this.batches.values()) {
       switch (batch.state.status) {
@@ -302,21 +307,19 @@ export class InitialSyncAsStateMachine {
         case BatchStatus.AwaitingDownload:
         case BatchStatus.Downloading:
         case BatchStatus.Processing:
-          return ProcessorAction.NoProcessingReady;
+          return;
       }
     }
 
     // TODO: Validate that the current batches status make sense, to hopefully recover from dead ends
     // i.e. If all states are in AwaitingValidation status, `this.batches.clear()`
     this.logger.error("Error: all batches are in AwaitingValidation state, should not happen");
-
-    return ProcessorAction.NoProcessingReady;
   }
 
   /**
    * Sends to process the batch
    */
-  private async processBatch(batch: Batch): Promise<ProcessorAction> {
+  private async processBatch(batch: Batch): Promise<void> {
     try {
       this.logger.info("Processing batch", batch.getMetadata());
       const blocks = batch.startProcessing();
@@ -335,7 +338,7 @@ export class InitialSyncAsStateMachine {
     }
   }
 
-  private onProcessedBatchSuccess(batch: Batch, blocks: SignedBeaconBlock[]): ProcessorAction {
+  private onProcessedBatchSuccess(batch: Batch, blocks: SignedBeaconBlock[]): void {
     batch.processingSuccess();
 
     // If the processed batch was not empty, we can validate previous unvalidated blocks.
@@ -345,21 +348,24 @@ export class InitialSyncAsStateMachine {
 
     // Check if the chain has completed syncing
     const lastEpochBatch = batch.startEpoch + EPOCHS_PER_BATCH - 1;
-    if (this.peerSet && lastEpochBatch >= this.peerSet.targetEpoch) {
-      this.logger.important("Completed initial sync", {targetEpoch: this.peerSet.targetEpoch});
-      return ProcessorAction.Done;
-    } else {
-      this.logSyncProgress(lastEpochBatch);
-      // A batch is no longer in Processing status, queue has an empty spot to download next batch
-      this.triggerBatchDownloader();
-      return ProcessorAction.ProcessNext;
+    if (this.peerSet) {
+      if (lastEpochBatch >= this.peerSet.targetEpoch) {
+        this.logger.important("Completed initial sync", {targetEpoch: this.peerSet.targetEpoch});
+        this.batchProcessor.end();
+      } else {
+        this.logSyncProgress(lastEpochBatch, this.peerSet.targetEpoch);
+      }
     }
+
+    // A batch is no longer in Processing status, queue has an empty spot to download next batch
+    this.triggerBatchDownloader();
+    this.triggerBatchProcessor();
   }
 
   /**
    * An invalid batch has been received that could not be processed, but that can be retried.
    */
-  private onProcessedBatchError(batch: Batch, error: Error): ProcessorAction {
+  private onProcessedBatchError(batch: Batch, error: Error): void {
     batch.processingError();
 
     // At least one block was successfully verified and imported, so we can be sure all
@@ -382,7 +388,6 @@ export class InitialSyncAsStateMachine {
 
     // Re-download failed batches
     this.triggerBatchDownloader();
-    return ProcessorAction.NoProcessingReady;
   }
 
   /**
@@ -415,11 +420,8 @@ export class InitialSyncAsStateMachine {
   /**
    * Register sync progress in TimeSeries instance and log current speed and time left
    */
-  private logSyncProgress(epoch: Epoch): void {
+  private logSyncProgress(epoch: Epoch, targetEpoch: Epoch): void {
     this.timeSeries.addPoint(epoch);
-
-    const targetEpoch = this.peerSet?.targetEpoch;
-    if (!targetEpoch) return;
 
     const epochsPerSecond = this.timeSeries.computeLinearSpeed();
     const slotsPerSecond = epochsPerSecond * this.config.params.SLOTS_PER_EPOCH;
@@ -429,10 +431,4 @@ export class InitialSyncAsStateMachine {
       hoursLeft: hoursToGo.toPrecision(3),
     });
   }
-}
-
-enum ProcessorAction {
-  NoProcessingReady,
-  Done,
-  ProcessNext,
 }

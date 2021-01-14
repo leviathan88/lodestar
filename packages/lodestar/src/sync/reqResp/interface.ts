@@ -7,6 +7,6 @@
  * fetching state from the chain and database as needed.
  */
 export interface IReqRespHandler {
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
+  syncPeersStatus(): Promise<void>;
+  goodbyeAllPeers(): Promise<void>;
 }

@@ -1,4 +1,4 @@
-import {IGossipHandler} from "./interface";
+import {GossipStatus, IGossipHandler} from "./interface";
 import {GossipEvent} from "../../network/gossip/constants";
 import {INetwork} from "../../network";
 import {
@@ -15,6 +15,7 @@ import {toHexString} from "@chainsafe/ssz";
 import {ILogger} from "@chainsafe/lodestar-utils";
 
 export class BeaconGossipHandler implements IGossipHandler {
+  status = GossipStatus.STOPPED;
   private readonly chain: IBeaconChain;
   private readonly network: INetwork;
   private readonly db: IBeaconDb;
@@ -29,12 +30,14 @@ export class BeaconGossipHandler implements IGossipHandler {
   }
 
   public async start(): Promise<void> {
+    this.status = GossipStatus.STARTED;
     this.currentForkDigest = await this.chain.getForkDigest();
     this.subscribeBlockAndAttestation(this.currentForkDigest);
     this.chain.emitter.on(ChainEvent.forkVersion, this.handleForkVersion);
   }
 
-  public async stop(): Promise<void> {
+  public stop(): void {
+    this.status = GossipStatus.STOPPED;
     this.unsubscribe(this.currentForkDigest);
     this.chain.emitter.removeListener(ChainEvent.forkVersion, this.handleForkVersion);
   }

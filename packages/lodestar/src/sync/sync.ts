@@ -1,15 +1,13 @@
 import PeerId from "peer-id";
+import {AbortController} from "abort-controller";
 import {IBeaconSync, ISyncModules} from "./interface";
 import {defaultSyncOptions, ISyncOptions} from "./options";
 import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
-import {sleep} from "@chainsafe/lodestar-utils";
 import {CommitteeIndex, Root, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
-import {FastSync, InitialSync} from "./initial";
-import {IRegularSync} from "./regular";
 import {BeaconReqRespHandler, IReqRespHandler} from "./reqResp";
-import {BeaconGossipHandler, IGossipHandler} from "./gossip";
-import {AttestationCollector, createStatus, RoundRobinArray, syncPeersStatus} from "./utils";
+import {BeaconGossipHandler, GossipStatus, IGossipHandler} from "./gossip";
+import {AttestationCollector, createStatus, RoundRobinArray} from "./utils";
 import {ChainEvent, IBeaconChain} from "../chain";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {List, toHexString} from "@chainsafe/ssz";
@@ -24,10 +22,8 @@ import {
 import {getPeersInitialSync} from "./utils/bestPeers";
 import {SyncEvent, SyncEventBus} from "./events";
 
-export enum SyncMode {
-  WAITING_PEERS,
-  INITIAL_SYNCING,
-  REGULAR_SYNCING,
+export enum SyncStatus {
+  SYNCING,
   SYNCED,
   STOPPED,
 }
@@ -39,18 +35,18 @@ export class BeaconSync implements IBeaconSync {
   private readonly network: INetwork;
   private readonly chain: IBeaconChain;
 
-  private mode: SyncMode;
-  private initialSync: InitialSync;
-  private regularSync: IRegularSync;
+  private status: SyncStatus = SyncStatus.STOPPED;
   private reqResp: IReqRespHandler;
   private gossip: IGossipHandler;
   private attestationCollector: AttestationCollector;
   private syncEventBus = new SyncEventBus();
 
-  private statusSyncTimer?: NodeJS.Timeout;
+  private syncPeersStatusInterval?: NodeJS.Timeout;
   private peerCountTimer?: NodeJS.Timeout;
   // avoid finding same root at the same time
   private processingRoots: Set<string>;
+
+  private controller = new AbortController();
 
   constructor(opts: ISyncOptions, modules: ISyncModules) {
     this.opts = opts;
@@ -58,132 +54,101 @@ export class BeaconSync implements IBeaconSync {
     this.network = modules.network;
     this.chain = modules.chain;
     this.logger = modules.logger;
-    this.initialSync = modules.initialSync || new FastSync(opts, modules);
-    this.regularSync = modules.regularSync || new ORARegularSync(opts, modules);
-    this.reqResp = modules.reqRespHandler || new BeaconReqRespHandler(modules);
+    this.reqResp = modules.reqRespHandler || new BeaconReqRespHandler(modules, this.controller.signal);
     this.gossip =
       modules.gossipHandler || new BeaconGossipHandler(modules.chain, modules.network, modules.db, this.logger);
-    this.attestationCollector = modules.attestationCollector || new AttestationCollector(modules.config, modules);
-    this.mode = SyncMode.STOPPED;
+    this.attestationCollector =
+      modules.attestationCollector || new AttestationCollector(modules.config, modules, this.controller.signal);
     this.processingRoots = new Set();
   }
 
   public async start(): Promise<void> {
-    this.mode = SyncMode.WAITING_PEERS as SyncMode;
-    this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
-    await this.reqResp.start();
-    await this.attestationCollector.start();
-
-    if (this.mode === SyncMode.STOPPED) {
+    if (this.status === SyncStatus.SYNCING) {
       return;
     }
+    this.status = SyncStatus.SYNCING;
+
+    this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
 
     const finalizedBlock = this.chain.forkChoice.getFinalizedBlock();
     const startEpoch = finalizedBlock.finalizedEpoch;
     const initialSync = new InitialSyncAsStateMachine(
-      startEpoch,
       this.processChainSegment,
       this.downloadBeaconBlocksByRange,
       this.getPeerSet,
       this.syncEventBus,
       this.config,
-      this.logger
+      this.logger,
+      this.controller.signal
     );
 
-    await initialSync.startSyncing();
+    // Sync initial sync up to the most common finalized checkpoint of all connected peers
+    this.syncPeersStatusEvery(this.config.params.SLOTS_PER_EPOCH * this.config.params.SECONDS_PER_SLOT * 1000);
+    await initialSync.startSyncing(startEpoch);
 
-    this.peerCountTimer = setInterval(this.logPeerCount, 3 * this.config.params.SECONDS_PER_SLOT * 1000);
-    await this.startInitialSync();
-    await this.startRegularSync();
-  }
-
-  processChainSegment: ProcessChainSegment = async (blocks) => {
-    // MUST ignore already known blocks
-    // TODO: Is there a way to ignore specifically the BLOCK_IS_ALREADY_KNOWN error on a segment?
-    blocks = blocks.filter(
-      (block) => !this.chain.forkChoice.hasBlock(this.config.types.BeaconBlock.hashTreeRoot(block.message))
-    );
-
-    const trusted = true; // TODO: Verify signatures
-    await this.chain.processChainSegment(blocks, trusted);
-  };
-
-  downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange = async (peerId, request) => {
-    const blocks = await this.network.reqResp.beaconBlocksByRange(peerId, request);
-    return blocks || [];
-  };
-
-  getPeerSet: GetPeerSet = () => {
-    const minPeers = this.opts.minPeers ?? defaultSyncOptions.minPeers;
-    const peerSet = getPeersInitialSync(this.network);
-    if (!peerSet) {
-      this.logger.info("No peers found");
-      return null;
-    } else if (peerSet.peers.length < minPeers) {
-      this.logger.info(`Waiting for minPeers: ${peerSet.peers.length}/${minPeers}`);
-      return null;
-    } else {
-      const targetEpoch = peerSet.checkpoint.epoch;
-      this.logger.info("New peer set", {count: peerSet.peers.length, targetEpoch});
-      return {peers: peerSet.peers.map((p) => p.peerId), targetEpoch};
-    }
-  };
-
-  public async stop(): Promise<void> {
-    this.network.removeListener(NetworkEvent.peerConnect, this.onPeerConnect);
-    if (this.peerCountTimer) {
-      clearInterval(this.peerCountTimer);
-    }
-    if (this.mode === SyncMode.STOPPED) {
+    if ((this.status as SyncStatus) === SyncStatus.STOPPED) {
       return;
     }
-    this.mode = SyncMode.STOPPED;
+
+    // Start regular sync
+    this.syncPeersStatusEvery(3 * this.config.params.SECONDS_PER_SLOT * 1000);
+    this.peerCountTimer = setInterval(this.logPeerCount, 3 * this.config.params.SECONDS_PER_SLOT * 1000);
+    this.chain.emitter.on(ChainEvent.errorBlock, this.onUnknownBlockRoot);
+    const regularSync = new ORARegularSync(this.opts, this.controller.signal, {
+      config: this.config,
+      network: this.network,
+      chain: this.chain,
+      logger: this.logger,
+    });
+    await this.gossip.start();
+    await regularSync.sync();
+
+    // Regular sync completed
+    this.status = SyncStatus.SYNCED;
+    this.stopSyncingPeersStatus();
+    this.gossip.handleSyncCompleted();
+    await this.network.handleSyncCompleted();
+  }
+
+  public async stop(): Promise<void> {
+    if (this.status === SyncStatus.STOPPED) {
+      return;
+    }
+    this.status = SyncStatus.STOPPED;
+
+    // Abort signal to trigger child modules clean functions: ReqRespHandler, AttestationCollector, etc
+    this.controller.abort();
+
+    // Stop timers
+    if (this.peerCountTimer) clearInterval(this.peerCountTimer);
+    this.stopSyncingPeersStatus();
+
+    // Remove subscriptions
+    this.network.off(NetworkEvent.peerConnect, this.onPeerConnect);
     this.chain.emitter.removeListener(ChainEvent.errorBlock, this.onUnknownBlockRoot);
-    this.regularSync.removeListener("syncCompleted", this.syncCompleted);
-    this.stopSyncTimer();
-    await this.initialSync.stop();
-    await this.regularSync.stop();
-    await this.attestationCollector.stop();
-    await this.reqResp.stop();
-    await this.gossip.stop();
+
+    await this.reqResp.goodbyeAllPeers();
+    this.gossip.stop();
   }
 
   public async getSyncStatus(): Promise<SyncingStatus> {
+    const currentSlot = this.chain.clock.currentSlot;
+    // TODO: Get the best known head slot from the group of peers with consider good
+    // TODO: Consider capping their answer with our clock or report large disparities
+    const bestKnownHeadSlot = currentSlot;
     const headSlot = this.chain.forkChoice.getHead().slot;
-    let target: Slot;
-    let syncDistance: bigint;
-    switch (this.mode) {
-      case SyncMode.WAITING_PEERS:
-        target = 0;
-        syncDistance = BigInt(1);
-        break;
-      case SyncMode.INITIAL_SYNCING:
-        target = await this.initialSync.getHighestBlock();
-        syncDistance = BigInt(target) - BigInt(headSlot);
-        break;
-      case SyncMode.REGULAR_SYNCING:
-        target = await this.regularSync.getHighestBlock();
-        syncDistance = BigInt(target) - BigInt(headSlot);
-        break;
-      case SyncMode.SYNCED:
-        target = headSlot;
-        syncDistance = BigInt(0);
-        break;
-      default:
-        throw new Error("Node is stopped, cannot get sync status");
-    }
     return {
-      headSlot: BigInt(target),
-      syncDistance: syncDistance < 0 ? BigInt(0) : syncDistance,
+      headSlot: BigInt(headSlot),
+      syncDistance: BigInt(bestKnownHeadSlot - headSlot),
     };
   }
 
   public isSynced(): boolean {
-    return this.mode === SyncMode.SYNCED;
+    return this.status === SyncStatus.SYNCED;
   }
 
   public async collectAttestations(slot: Slot, committeeIndex: CommitteeIndex): Promise<void> {
-    if (!(this.mode === SyncMode.REGULAR_SYNCING || this.mode === SyncMode.SYNCED)) {
+    if (this.gossip.status !== GossipStatus.STARTED) {
       throw new Error("Cannot collect attestations before regular sync");
     }
     await this.attestationCollector.subscribeToCommitteeAttestations(slot, committeeIndex);
@@ -208,40 +173,44 @@ export class BeaconSync implements IBeaconSync {
     }
   };
 
-  private async startInitialSync(): Promise<void> {
-    if (this.mode === SyncMode.STOPPED) return;
-    this.mode = SyncMode.INITIAL_SYNCING;
-    this.startSyncTimer(this.config.params.SLOTS_PER_EPOCH * this.config.params.SECONDS_PER_SLOT * 1000);
-    await this.regularSync.stop();
-    await this.initialSync.start();
-  }
+  private processChainSegment: ProcessChainSegment = async (blocks) => {
+    // MUST ignore already known blocks
+    // TODO: Is there a way to ignore specifically the BLOCK_IS_ALREADY_KNOWN error on a segment?
+    blocks = blocks.filter(
+      (block) => !this.chain.forkChoice.hasBlock(this.config.types.BeaconBlock.hashTreeRoot(block.message))
+    );
 
-  private async startRegularSync(): Promise<void> {
-    if (this.mode === SyncMode.STOPPED) return;
-    this.mode = SyncMode.REGULAR_SYNCING;
-    await this.initialSync.stop();
-    this.startSyncTimer(3 * this.config.params.SECONDS_PER_SLOT * 1000);
-    this.regularSync.on("syncCompleted", this.syncCompleted);
-    this.chain.emitter.on(ChainEvent.errorBlock, this.onUnknownBlockRoot);
-    await this.gossip.start();
-    await this.regularSync.start();
-  }
-
-  private syncCompleted = async (): Promise<void> => {
-    this.mode = SyncMode.SYNCED;
-    this.stopSyncTimer();
-    this.gossip.handleSyncCompleted();
-    await this.network.handleSyncCompleted();
+    const trusted = true; // TODO: Verify signatures
+    await this.chain.processChainSegment(blocks, trusted);
   };
 
-  private startSyncTimer(interval: number): void {
-    this.stopSyncTimer();
-    this.statusSyncTimer = setInterval(async () => {
-      try {
-        await syncPeersStatus(this.network, await createStatus(this.chain));
-      } catch (e) {
+  private downloadBeaconBlocksByRange: DownloadBeaconBlocksByRange = async (peerId, request) => {
+    const blocks = await this.network.reqResp.beaconBlocksByRange(peerId, request);
+    return blocks || [];
+  };
+
+  private getPeerSet: GetPeerSet = () => {
+    const minPeers = this.opts.minPeers ?? defaultSyncOptions.minPeers;
+    const peerSet = getPeersInitialSync(this.network);
+    if (!peerSet) {
+      this.logger.info("No peers found");
+      return null;
+    } else if (peerSet.peers.length < minPeers) {
+      this.logger.info(`Waiting for minPeers: ${peerSet.peers.length}/${minPeers}`);
+      return null;
+    } else {
+      const targetEpoch = peerSet.checkpoint.epoch;
+      this.logger.info("New peer set", {count: peerSet.peers.length, targetEpoch});
+      return {peers: peerSet.peers.map((p) => p.peerId), targetEpoch};
+    }
+  };
+
+  private syncPeersStatusEvery(interval: number): void {
+    this.stopSyncingPeersStatus();
+    this.syncPeersStatusInterval = setInterval(() => {
+      this.reqResp.syncPeersStatus().catch((e) => {
         this.logger.error("Error on syncPeersStatus", e);
-      }
+      });
     }, interval);
   }
 
@@ -253,17 +222,8 @@ export class BeaconSync implements IBeaconSync {
     });
   };
 
-  private stopSyncTimer(): void {
-    if (this.statusSyncTimer) clearInterval(this.statusSyncTimer);
-  }
-
-  private async waitForPeers(): Promise<void> {
-    this.logger.info("Waiting for peers...");
-    const minPeers = this.opts.minPeers ?? defaultSyncOptions.minPeers;
-    while (this.mode !== SyncMode.STOPPED && this.getSyncPeers().length < minPeers) {
-      this.logger.warn(`Current peerCount=${this.getSyncPeers().length}, required = ${minPeers}`);
-      await sleep(3000);
-    }
+  private stopSyncingPeersStatus(): void {
+    if (this.syncPeersStatusInterval) clearInterval(this.syncPeersStatusInterval);
   }
 
   private getSyncPeers(): PeerId[] {

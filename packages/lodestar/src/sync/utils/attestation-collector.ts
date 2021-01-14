@@ -1,8 +1,8 @@
+import {AbortSignal} from "abort-controller";
 import {ChainEvent, IBeaconChain} from "../../chain";
 import {IBeaconDb} from "../../db";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {Attestation, CommitteeIndex, ForkDigest, Slot} from "@chainsafe/lodestar-types";
-import {IService} from "../../node";
 import {INetwork} from "../../network";
 import {computeSubnetForSlot} from "@chainsafe/lodestar-beacon-state-transition";
 import {ILogger} from "@chainsafe/lodestar-utils";
@@ -14,7 +14,7 @@ export interface IAttestationCollectorModules {
   logger: ILogger;
 }
 
-export class AttestationCollector implements IService {
+export class AttestationCollector {
   private readonly config: IBeaconConfig;
   private readonly chain: IBeaconChain;
   private readonly network: INetwork;
@@ -23,21 +23,18 @@ export class AttestationCollector implements IService {
   private timers: NodeJS.Timeout[] = [];
   private aggregationDuties: Map<Slot, Set<CommitteeIndex>> = new Map();
 
-  public constructor(config: IBeaconConfig, modules: IAttestationCollectorModules) {
+  public constructor(config: IBeaconConfig, modules: IAttestationCollectorModules, signal: AbortSignal) {
     this.config = config;
     this.chain = modules.chain;
     this.network = modules.network;
     this.db = modules.db;
     this.logger = modules.logger;
-  }
 
-  public async start(): Promise<void> {
     this.chain.emitter.on(ChainEvent.clockSlot, this.checkDuties);
-  }
-
-  public async stop(): Promise<void> {
-    for (const timer of this.timers) clearTimeout(timer);
-    this.chain.emitter.removeListener(ChainEvent.clockSlot, this.checkDuties);
+    signal.addEventListener("abort", () => {
+      this.chain.emitter.off(ChainEvent.clockSlot, this.checkDuties);
+      for (const timer of this.timers) clearTimeout(timer);
+    });
   }
 
   public async subscribeToCommitteeAttestations(slot: Slot, committeeIndex: CommitteeIndex): Promise<void> {

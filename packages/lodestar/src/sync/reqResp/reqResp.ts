@@ -2,6 +2,7 @@
  * @module sync
  */
 
+import {AbortSignal} from "abort-controller";
 import {computeStartSlotAtEpoch, GENESIS_SLOT, getBlockRootAtSlot} from "@chainsafe/lodestar-beacon-state-transition";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {
@@ -23,7 +24,7 @@ import {IBeaconChain} from "../../chain";
 import {GENESIS_EPOCH, Method, ReqRespEncoding, RpcResponseStatus, ZERO_HASH} from "../../constants";
 import {IBeaconDb} from "../../db";
 import {IBlockFilterOptions} from "../../db/api/beacon/repositories";
-import {createRpcProtocol, INetwork, NetworkEvent} from "../../network";
+import {createRpcProtocol, INetwork} from "../../network";
 import {ResponseError} from "../../network/reqresp/response";
 import {handlePeerMetadataSequence} from "../../network/peers/utils";
 import {createStatus, syncPeersStatus} from "../utils/sync";
@@ -70,33 +71,38 @@ export class BeaconReqRespHandler implements IReqRespHandler {
   private network: INetwork;
   private logger: ILogger;
 
-  public constructor({config, db, chain, network, logger}: IReqRespHandlerModules) {
+  public constructor({config, db, chain, network, logger}: IReqRespHandlerModules, signal: AbortSignal) {
     this.config = config;
     this.db = db;
     this.chain = chain;
     this.network = network;
     this.logger = logger;
+
+    this.network.reqResp.registerHandler(this.onRequest.bind(this));
+    signal.addEventListener("abort", () => this.network.reqResp.unregisterHandler());
   }
 
-  public async start(): Promise<void> {
-    this.network.reqResp.registerHandler(this.onRequest.bind(this));
+  /**
+   * Send current chain status to all peers and store their statuses
+   */
+  public async syncPeersStatus(): Promise<void> {
     const myStatus = await createStatus(this.chain);
     await syncPeersStatus(this.network, myStatus);
   }
 
-  public async stop(): Promise<void> {
+  /**
+   * Send goodbye to all peers, for shutdown
+   */
+  public async goodbyeAllPeers(reason = GoodByeReasonCode.CLIENT_SHUTDOWN): Promise<void> {
+    const goodbyeProtocol = createRpcProtocol(Method.Goodbye, ReqRespEncoding.SSZ_SNAPPY);
+    const allPeers = this.network.getPeers({supportsProtocols: [goodbyeProtocol]});
     await Promise.all(
-      this.network
-        .getPeers({supportsProtocols: [createRpcProtocol(Method.Goodbye, ReqRespEncoding.SSZ_SNAPPY)]})
-        .map(async (peer) => {
-          try {
-            await this.network.reqResp.goodbye(peer.id, BigInt(GoodByeReasonCode.CLIENT_SHUTDOWN));
-          } catch (e) {
-            this.logger.verbose("Failed to send goodbye", {error: e.message});
-          }
-        })
+      allPeers.map(async (peer) => {
+        await this.network.reqResp.goodbye(peer.id, BigInt(reason)).catch((e) => {
+          this.logger.verbose("Failed to send goodbye", {error: e.message});
+        });
+      })
     );
-    this.network.reqResp.unregisterHandler();
   }
 
   public async *onRequest(method: Method, requestBody: RequestBody, peerId: PeerId): AsyncIterable<ResponseBody> {

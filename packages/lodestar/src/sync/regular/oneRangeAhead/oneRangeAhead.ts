@@ -4,9 +4,8 @@ import {SlotRoot} from "@chainsafe/lodestar-types";
 import {AbortController, AbortSignal} from "abort-controller";
 import {ILogger, sleep} from "@chainsafe/lodestar-utils";
 import {toHexString} from "@chainsafe/ssz";
-import {EventEmitter} from "events";
 import PeerId from "peer-id";
-import {IRegularSync, IRegularSyncOptions, RegularSyncEventEmitter} from "..";
+import {IRegularSyncOptions} from "../options";
 import {ChainEvent, IBeaconChain} from "../../../chain";
 import {INetwork} from "../../../network";
 import {GossipEvent} from "../../../network/gossip/constants";
@@ -20,27 +19,32 @@ import {IBlockRangeFetcher, ORARegularSyncModules} from "./interface";
  * Fetcher may return blocks of a different forkchoice branch.
  * This is ok, we handle that by beacon_blocks_by_root in sync service.
  */
-export class ORARegularSync extends (EventEmitter as {new (): RegularSyncEventEmitter}) implements IRegularSync {
+export class ORARegularSync {
   private readonly config: IBeaconConfig;
   private readonly network: INetwork;
   private readonly chain: IBeaconChain;
   private readonly logger: ILogger;
   private bestPeer: PeerId | undefined;
   private fetcher: IBlockRangeFetcher;
-  private controller!: AbortController;
-  private blockBuffer: SignedBeaconBlock[];
+  private controller = new AbortController();
+  private blockBuffer: SignedBeaconBlock[] = [];
+  private signal: AbortSignal;
 
-  constructor(options: Partial<IRegularSyncOptions>, modules: ORARegularSyncModules) {
-    super();
+  constructor(options: Partial<IRegularSyncOptions>, signal: AbortSignal, modules: ORARegularSyncModules) {
     this.config = modules.config;
     this.network = modules.network;
     this.chain = modules.chain;
     this.logger = modules.logger;
     this.fetcher = modules.fetcher || new BlockRangeFetcher(options, modules, this.getSyncPeers.bind(this));
-    this.blockBuffer = [];
+    this.signal = signal;
+
+    this.signal.addEventListener("abort", () => this.stop());
   }
 
-  public async start(): Promise<void> {
+  /**
+   * Starts sync and resolves when completed
+   */
+  public async sync(): Promise<void> {
     const headSlot = this.chain.forkChoice.getHead().slot;
     const currentSlot = this.chain.clock.currentSlot;
     this.logger.info("Started regular syncing", {currentSlot, headSlot});
@@ -50,46 +54,8 @@ export class ORARegularSync extends (EventEmitter as {new (): RegularSyncEventEm
     this.chain.emitter.on(ChainEvent.block, this.onProcessedBlock);
     const head = this.chain.forkChoice.getHead();
     this.setLastProcessedBlock({slot: head.slot, root: head.blockRoot});
-    this.sync().catch((e) => {
-      this.logger.error("Regular Sync", e);
-    });
-  }
 
-  public async stop(): Promise<void> {
-    if (this.controller && !this.controller.signal.aborted) {
-      this.controller.abort();
-    }
-    this.network.gossip.unsubscribe(await this.chain.getForkDigest(), GossipEvent.BLOCK, this.onGossipBlock);
-    this.chain.emitter.off(ChainEvent.block, this.onProcessedBlock);
-  }
-
-  public setLastProcessedBlock(lastProcessedBlock: SlotRoot): void {
-    this.fetcher.setLastProcessedBlock(lastProcessedBlock);
-  }
-
-  public getHighestBlock(): Slot {
-    const lastBlock = this.blockBuffer.length > 0 ? this.blockBuffer[this.blockBuffer.length - 1].message.slot : 0;
-    return lastBlock ?? this.chain.forkChoice.getHead().slot;
-  }
-
-  private onGossipBlock = async (block: SignedBeaconBlock): Promise<void> => {
-    const gossipParentBlockRoot = block.message.parentRoot;
-    if (this.chain.forkChoice.hasBlock(gossipParentBlockRoot as Uint8Array)) {
-      this.logger.important("Regular Sync: caught up to gossip block parent " + toHexString(gossipParentBlockRoot));
-      this.emit("syncCompleted");
-      await this.stop();
-    }
-  };
-
-  private onProcessedBlock = async (signedBlock: SignedBeaconBlock): Promise<void> => {
-    if (signedBlock.message.slot >= this.chain.clock.currentSlot) {
-      this.logger.info("Regular Sync: processed up to current slot", {slot: signedBlock.message.slot});
-      this.emit("syncCompleted");
-      await this.stop();
-    }
-  };
-
-  private async sync(): Promise<void> {
+    // Start the sync loop, call controller.abort() to stop the sync
     this.blockBuffer = await this.fetcher.getNextBlockRange();
     while (!this.controller.signal.aborted) {
       // blockBuffer is always not empty
@@ -109,7 +75,36 @@ export class ORARegularSync extends (EventEmitter as {new (): RegularSyncEventEm
         currentSlot: this.chain.clock.currentSlot,
       });
     }
+
+    await this.stop();
   }
+
+  public async stop(): Promise<void> {
+    if (this.controller && !this.controller.signal.aborted) {
+      this.controller.abort();
+    }
+    this.network.gossip.unsubscribe(await this.chain.getForkDigest(), GossipEvent.BLOCK, this.onGossipBlock);
+    this.chain.emitter.off(ChainEvent.block, this.onProcessedBlock);
+  }
+
+  public setLastProcessedBlock(lastProcessedBlock: SlotRoot): void {
+    this.fetcher.setLastProcessedBlock(lastProcessedBlock);
+  }
+
+  private onGossipBlock = async (block: SignedBeaconBlock): Promise<void> => {
+    const gossipParentBlockRoot = block.message.parentRoot;
+    if (this.chain.forkChoice.hasBlock(gossipParentBlockRoot as Uint8Array)) {
+      this.logger.important("Regular Sync: caught up to gossip block parent " + toHexString(gossipParentBlockRoot));
+      this.controller.abort();
+    }
+  };
+
+  private onProcessedBlock = async (signedBlock: SignedBeaconBlock): Promise<void> => {
+    if (signedBlock.message.slot >= this.chain.clock.currentSlot) {
+      this.logger.info("Regular Sync: processed up to current slot", {slot: signedBlock.message.slot});
+      this.controller.abort();
+    }
+  };
 
   /**
    * Make sure the best peer is not disconnected and it's better than us.
