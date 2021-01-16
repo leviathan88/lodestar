@@ -23,12 +23,13 @@ import {IBeaconChain} from "../../chain";
 import {Method, ReqRespEncoding, RpcResponseStatus} from "../../constants";
 import {IBeaconDb} from "../../db";
 import {IBlockFilterOptions} from "../../db/api/beacon/repositories";
-import {createRpcProtocol, INetwork} from "../../network";
+import {createRpcProtocol, INetwork, NetworkEvent} from "../../network";
 import {ResponseError} from "../../network/reqresp/response";
 import {handlePeerMetadataSequence} from "../../network/peers/utils";
-import {createStatus, syncPeersStatus} from "../utils/sync";
+import {createStatus} from "../utils/sync";
 import {IReqRespHandler} from "./interface";
 import {shouldDisconnectOnStatus} from "../utils/shouldDisconnectOnStatus";
+import {SyncEvent, SyncEventBus} from "../events";
 
 export interface IReqRespHandlerModules {
   config: IBeaconConfig;
@@ -70,24 +71,26 @@ export class BeaconReqRespHandler implements IReqRespHandler {
   private chain: IBeaconChain;
   private network: INetwork;
   private logger: ILogger;
+  private syncEventBus: SyncEventBus;
 
-  public constructor({config, db, chain, network, logger}: IReqRespHandlerModules, signal: AbortSignal) {
+  public constructor(
+    {config, db, chain, network, logger}: IReqRespHandlerModules,
+    syncEventBus: SyncEventBus,
+    signal: AbortSignal
+  ) {
     this.config = config;
     this.db = db;
     this.chain = chain;
     this.network = network;
     this.logger = logger;
+    this.syncEventBus = syncEventBus;
 
     this.network.reqResp.registerHandler(this.onRequest.bind(this));
-    signal.addEventListener("abort", () => this.network.reqResp.unregisterHandler());
-  }
-
-  /**
-   * Send current chain status to all peers and store their statuses
-   */
-  public async syncPeersStatus(): Promise<void> {
-    const myStatus = await createStatus(this.chain);
-    await syncPeersStatus(this.network, myStatus);
+    this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
+    signal.addEventListener("abort", () => {
+      this.network.reqResp.unregisterHandler();
+      this.network.off(NetworkEvent.peerConnect, this.onPeerConnect);
+    });
   }
 
   /**
@@ -133,24 +136,7 @@ export class BeaconReqRespHandler implements IReqRespHandler {
   private async *onStatus(requestBody: Status, peerId: PeerId): AsyncIterable<Status> {
     // send status response
     yield await createStatus(this.chain);
-
-    const shouldDisconnect = await shouldDisconnectOnStatus(requestBody, {
-      chain: this.chain,
-      config: this.config,
-      logger: this.logger,
-    });
-
-    if (shouldDisconnect) {
-      try {
-        await this.network.reqResp.goodbye(peerId, BigInt(GoodByeReasonCode.IRRELEVANT_NETWORK));
-      } catch {
-        // ignore error
-        return;
-      }
-    }
-
-    // set status on peer
-    this.network.peerMetadata.setStatus(peerId, requestBody);
+    this.syncEventBus.emit(SyncEvent.receivedPeerStatus, peerId, requestBody);
   }
 
   private async *onGoodbye(requestBody: Goodbye, peerId: PeerId): AsyncIterable<bigint> {
@@ -238,6 +224,41 @@ export class BeaconReqRespHandler implements IReqRespHandler {
       if (block) {
         yield block;
       }
+    }
+  };
+
+  private onPeerConnect = async (peerId: PeerId, direction: "inbound" | "outbound"): Promise<void> => {
+    try {
+      let peerStatus: Status;
+      switch (direction) {
+        case "outbound":
+          // Spec: The dialing client MUST send a Status request upon connection
+          peerStatus = await this.network.reqResp.status(peerId, await createStatus(this.chain));
+          break;
+
+        case "inbound":
+          peerStatus = await new Promise<Status>((resolve) => {
+            this.syncEventBus.once(SyncEvent.receivedPeerStatus, (_peer, status) => resolve(status));
+          });
+          break;
+
+        default:
+          throw Error(`Unknown direction: ${direction}`);
+      }
+
+      if (await shouldDisconnectOnStatus(peerStatus, {chain: this.chain, config: this.config, logger: this.logger})) {
+        await this.network.reqResp.goodbye(peerId, BigInt(GoodByeReasonCode.IRRELEVANT_NETWORK));
+        return;
+      }
+
+      // set status on peer
+      this.network.peerMetadata.setStatus(peerId, peerStatus);
+      this.syncEventBus.emit(SyncEvent.peerConnect, peerId);
+    } catch (e) {
+      this.logger.verbose("Error onPeerConnect", {peerId: peerId.toB58String()}, e);
+      await this.network.disconnect(peerId).catch((e) => {
+        this.logger.error("Error disconnecting irrelevant peer", {peerId: peerId.toB58String()}, e);
+      });
     }
   };
 }

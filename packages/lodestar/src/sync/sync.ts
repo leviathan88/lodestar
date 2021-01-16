@@ -4,10 +4,10 @@ import {IBeaconSync, ISyncModules} from "./interface";
 import {defaultSyncOptions, ISyncOptions} from "./options";
 import {getSyncProtocols, getUnknownRootProtocols, INetwork, NetworkEvent} from "../network";
 import {ILogger} from "@chainsafe/lodestar-utils";
-import {CommitteeIndex, Root, Slot, SyncingStatus} from "@chainsafe/lodestar-types";
+import {CommitteeIndex, Root, Slot, Status, SyncingStatus} from "@chainsafe/lodestar-types";
 import {BeaconReqRespHandler, IReqRespHandler} from "./reqResp";
 import {BeaconGossipHandler, GossipStatus, IGossipHandler} from "./gossip";
-import {AttestationCollector, createStatus, RoundRobinArray} from "./utils";
+import {AttestationCollector, createStatus, RoundRobinArray, syncPeersStatus} from "./utils";
 import {ChainEvent, IBeaconChain} from "../chain";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {List, toHexString} from "@chainsafe/ssz";
@@ -21,6 +21,8 @@ import {
 } from "./asStateMachine/chain";
 import {getPeersInitialSync} from "./utils/bestPeers";
 import {SyncEvent, SyncEventBus} from "./events";
+import {shouldDisconnectOnStatus} from "./utils/shouldDisconnectOnStatus";
+import {GoodByeReasonCode} from "../constants";
 
 export enum SyncStatus {
   SYNCING,
@@ -54,7 +56,8 @@ export class BeaconSync implements IBeaconSync {
     this.network = modules.network;
     this.chain = modules.chain;
     this.logger = modules.logger;
-    this.reqResp = modules.reqRespHandler || new BeaconReqRespHandler(modules, this.controller.signal);
+    this.reqResp =
+      modules.reqRespHandler || new BeaconReqRespHandler(modules, this.syncEventBus, this.controller.signal);
     this.gossip =
       modules.gossipHandler || new BeaconGossipHandler(modules.chain, modules.network, modules.db, this.logger);
     this.attestationCollector =
@@ -68,11 +71,10 @@ export class BeaconSync implements IBeaconSync {
     }
     this.status = SyncStatus.SYNCING;
 
-    this.network.on(NetworkEvent.peerConnect, this.onPeerConnect);
-
     const finalizedBlock = this.chain.forkChoice.getFinalizedBlock();
     const startEpoch = finalizedBlock.finalizedEpoch;
     const initialSync = new InitialSyncAsStateMachine(
+      startEpoch,
       this.processChainSegment,
       this.downloadBeaconBlocksByRange,
       this.getPeerSet,
@@ -84,7 +86,7 @@ export class BeaconSync implements IBeaconSync {
 
     // Sync initial sync up to the most common finalized checkpoint of all connected peers
     this.syncPeersStatusEvery(this.config.params.SLOTS_PER_EPOCH * this.config.params.SECONDS_PER_SLOT * 1000);
-    await initialSync.startSyncing(startEpoch);
+    await initialSync.sync();
 
     if ((this.status as SyncStatus) === SyncStatus.STOPPED) {
       return;
@@ -124,7 +126,6 @@ export class BeaconSync implements IBeaconSync {
     this.stopSyncingPeersStatus();
 
     // Remove subscriptions
-    this.network.off(NetworkEvent.peerConnect, this.onPeerConnect);
     this.chain.emitter.removeListener(ChainEvent.errorBlock, this.onUnknownBlockRoot);
 
     await this.reqResp.goodbyeAllPeers();
@@ -153,25 +154,6 @@ export class BeaconSync implements IBeaconSync {
     }
     await this.attestationCollector.subscribeToCommitteeAttestations(slot, committeeIndex);
   }
-
-  private onPeerConnect = async (peerId: PeerId, direction: "inbound" | "outbound"): Promise<void> => {
-    if (direction !== "outbound") {
-      return;
-    }
-
-    const localStatus = await createStatus(this.chain);
-    try {
-      const peerStatus = await this.network.reqResp.status(peerId, localStatus);
-      this.network.peerMetadata.setStatus(peerId, peerStatus);
-      this.syncEventBus.emit(SyncEvent.peerConnect, peerId);
-    } catch (e) {
-      this.logger.verbose("Failed to get peer latest status and metadata", {
-        peerId: peerId.toB58String(),
-        error: e.message,
-      });
-      await this.network.disconnect(peerId);
-    }
-  };
 
   private processChainSegment: ProcessChainSegment = async (blocks) => {
     // MUST ignore already known blocks
@@ -205,12 +187,18 @@ export class BeaconSync implements IBeaconSync {
     }
   };
 
+  /**
+   * Send current chain status to all peers and store their statuses
+   */
   private syncPeersStatusEvery(interval: number): void {
     this.stopSyncingPeersStatus();
-    this.syncPeersStatusInterval = setInterval(() => {
-      this.reqResp.syncPeersStatus().catch((e) => {
+    this.syncPeersStatusInterval = setInterval(async () => {
+      try {
+        const myStatus = await createStatus(this.chain);
+        await syncPeersStatus(this.network, myStatus);
+      } catch (e) {
         this.logger.error("Error on syncPeersStatus", e);
-      });
+      }
     }, interval);
   }
 

@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "postinstall": "lerna run clean && lerna run build",
+    "postinstall": "lerna run clean && lerna run build --concurrency 1",
     "build": "lerna run build",
     "build:docs": "lerna run clean && lerna run build && lerna run build:typedocs && lerna run build:refdocs && ./scripts/prepare-docs.sh",
     "build:lib:watch": "lerna run build:lib:watch --parallel",
