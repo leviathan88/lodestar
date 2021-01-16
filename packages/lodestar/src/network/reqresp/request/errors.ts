@@ -22,6 +22,8 @@ export enum RequestErrorCode {
   TTFB_TIMEOUT = "REQUEST_ERROR_TTFB_TIMEOUT",
   /** Timeout between `<response_chunk>` exceed */
   RESP_TIMEOUT = "REQUEST_ERROR_RESP_TIMEOUT",
+  /** Expected one response chunk */
+  NO_CHUNK_RETURNED = "REQUEST_ERROR_NO_CHUNK_RETURNED",
 }
 
 type RequestErrorType =
@@ -33,7 +35,8 @@ type RequestErrorType =
   | {code: RequestErrorCode.REQUEST_TIMEOUT}
   | {code: RequestErrorCode.REQUEST_ERROR; error: Error}
   | {code: RequestErrorCode.TTFB_TIMEOUT}
-  | {code: RequestErrorCode.RESP_TIMEOUT};
+  | {code: RequestErrorCode.RESP_TIMEOUT}
+  | {code: RequestErrorCode.NO_CHUNK_RETURNED};
 
 export interface IRequestErrorMetadata {
   method: Method;

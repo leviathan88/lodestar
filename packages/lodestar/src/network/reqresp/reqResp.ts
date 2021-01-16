@@ -125,7 +125,7 @@ export class ReqResp implements IReqResp {
     this.controller?.abort();
   }
 
-  public async status(peerId: PeerId, request: Status): Promise<Status | null> {
+  public async status(peerId: PeerId, request: Status): Promise<Status> {
     return await this.sendRequest<Status>(peerId, Method.Status, request);
   }
 
@@ -133,11 +133,11 @@ export class ReqResp implements IReqResp {
     await this.sendRequest<Goodbye>(peerId, Method.Goodbye, request);
   }
 
-  public async ping(peerId: PeerId, request: Ping): Promise<Ping | null> {
+  public async ping(peerId: PeerId, request: Ping): Promise<Ping> {
     return await this.sendRequest<Ping>(peerId, Method.Ping, request);
   }
 
-  public async metadata(peerId: PeerId): Promise<Metadata | null> {
+  public async metadata(peerId: PeerId): Promise<Metadata> {
     return await this.sendRequest<Metadata>(peerId, Method.Metadata, null);
   }
 
@@ -161,7 +161,7 @@ export class ReqResp implements IReqResp {
     method: Method,
     body: RequestBody,
     maxResponses?: number
-  ): Promise<T | null> {
+  ): Promise<T> {
     try {
       const encoding = this.peerMetadata.getEncoding(peerId) ?? ReqRespEncoding.SSZ_SNAPPY;
       const result = await sendRequest<T>(
