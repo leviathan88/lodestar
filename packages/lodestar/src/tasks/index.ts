@@ -2,6 +2,7 @@
  * @module tasks used for running tasks on specific events
  */
 
+import {AbortSignal} from "abort-controller";
 import {Checkpoint} from "@chainsafe/lodestar-types";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {ILogger} from "@chainsafe/lodestar-utils";
@@ -15,6 +16,7 @@ import {IBeaconSync} from "../sync";
 import {InteropSubnetsJoiningTask} from "./tasks/interopSubnetsJoiningTask";
 import {INetwork, NetworkEvent} from "../network";
 import {computeEpochAtSlot} from "@chainsafe/lodestar-beacon-state-transition";
+import {JobQueue} from "../util/queue";
 
 /**
  * Minimum number of epochs between archived states
@@ -40,10 +42,20 @@ export class TasksService implements IService {
   private readonly sync: IBeaconSync;
   private readonly network: INetwork;
   private readonly logger: ILogger;
+  private jobQueue: JobQueue;
 
   private interopSubnetsTask: InteropSubnetsJoiningTask;
 
-  public constructor(config: IBeaconConfig, modules: ITasksModules) {
+  public constructor({
+    config,
+    signal,
+    queueSize = 256,
+    ...modules
+  }: ITasksModules & {
+    config: IBeaconConfig;
+    signal: AbortSignal;
+    queueSize?: number;
+  }) {
     this.config = config;
     this.db = modules.db;
     this.chain = modules.chain;
@@ -55,6 +67,7 @@ export class TasksService implements IService {
       network: this.network,
       logger: this.logger,
     });
+    this.jobQueue = new JobQueue({queueSize, signal});
   }
 
   public async start(): Promise<void> {
@@ -87,6 +100,10 @@ export class TasksService implements IService {
   };
 
   private onFinalizedCheckpoint = async (finalized: Checkpoint): Promise<void> => {
+    return this.jobQueue.enqueueJob(async () => await this.processFinalizedCheckpoint(finalized));
+  };
+
+  private processFinalizedCheckpoint = async (finalized: Checkpoint): Promise<void> => {
     try {
       await new ArchiveBlocksTask(
         this.config,

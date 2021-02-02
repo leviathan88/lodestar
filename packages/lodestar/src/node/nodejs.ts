@@ -159,7 +159,9 @@ export class BeaconNode {
       network,
       logger: logger.child(opts.logger.sync),
     });
-    const chores = new TasksService(config, {
+    const chores = new TasksService({
+      config,
+      signal: controller.signal,
       db,
       chain,
       sync,
