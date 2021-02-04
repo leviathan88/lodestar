@@ -72,9 +72,10 @@ export async function processSlotsToNearestCheckpoint(
     nextEpochSlot += SLOTS_PER_EPOCH
   ) {
     processSlots(postCtx.epochCtx, postCtx.state, nextEpochSlot);
-    emitCheckpointEvent(emitter, cloneStateCtx(postCtx));
     // this avoids keeping our node busy processing blocks
+    // important: put this before emitting event to finish this promise asap to avoid event loop lag
     await sleep(0);
+    emitCheckpointEvent(emitter, cloneStateCtx(postCtx));
   }
   return postCtx;
 }
@@ -140,6 +141,10 @@ export async function runStateTransition(
     verifySignatures: !job.validSignatures,
   });
 
+  // this avoids keeping our node busy processing blocks
+  // important: put this before emitting event to finish this promise asap to avoid event loop lag
+  await sleep(0);
+
   const oldHead = forkChoice.getHead();
 
   // current justified checkpoint should be prev epoch or current epoch if it's just updated
@@ -161,7 +166,5 @@ export async function runStateTransition(
   emitBlockEvent(emitter, job, postStateContext);
   emitForkChoiceHeadEvents(emitter, forkChoice, forkChoice.getHead(), oldHead);
 
-  // this avoids keeping our node busy processing blocks
-  await sleep(0);
   return postStateContext;
 }
