@@ -1,4 +1,5 @@
 import {toHexString, fromHexString} from "@chainsafe/ssz";
+import {sleep} from "@chainsafe/lodestar-utils";
 import {Checkpoint, Epoch} from "@chainsafe/lodestar-types";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {ITreeStateContext} from "./stateContextCache";
@@ -24,6 +25,7 @@ export class CheckpointStateCache {
   }
 
   public async get(cp: Checkpoint): Promise<ITreeStateContext | null> {
+    await sleep(0);
     const item = this.cache[toHexString(this.config.types.Checkpoint.hashTreeRoot(cp))];
     if (!item) {
       return null;
@@ -43,12 +45,14 @@ export class CheckpointStateCache {
     } else {
       this.epochIndex[cp.epoch] = new Set([epochKey]);
     }
+    await sleep(0);
   }
 
   /**
    * Searches for the latest cached state with a `root`, starting with `epoch` and descending
    */
   public async getLatest({root, epoch}: Checkpoint): Promise<ITreeStateContext | null> {
+    await sleep(0);
     const hexRoot = toHexString(root);
     // sort epochs in descending order, only consider epochs lte `epoch`
     const epochs = Object.keys(this.epochIndex)
@@ -70,6 +74,7 @@ export class CheckpointStateCache {
         await this.deleteAllEpochItems(epoch);
       }
     }
+    await sleep(0);
   }
 
   public async prune(finalizedEpoch: Epoch, justifiedEpoch: Epoch): Promise<void> {
@@ -82,6 +87,7 @@ export class CheckpointStateCache {
         await this.deleteAllEpochItems(epoch);
       }
     }
+    await sleep(0);
   }
 
   public async delete(cp: Checkpoint): Promise<void> {
@@ -92,6 +98,7 @@ export class CheckpointStateCache {
     if (!this.epochIndex[cp.epoch]?.size) {
       delete this.epochIndex[cp.epoch];
     }
+    await sleep(0);
   }
 
   public async deleteAllEpochItems(epoch: Epoch): Promise<void> {
@@ -99,6 +106,7 @@ export class CheckpointStateCache {
       delete this.cache[toHexString(this.config.types.Checkpoint.hashTreeRoot({root: fromHexString(hexRoot), epoch}))];
     }
     delete this.epochIndex[epoch];
+    await sleep(0);
   }
 
   public clear(): void {

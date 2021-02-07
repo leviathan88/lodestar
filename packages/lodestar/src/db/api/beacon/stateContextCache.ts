@@ -1,4 +1,5 @@
 import {ByteVector, toHexString, TreeBacked} from "@chainsafe/ssz";
+import {sleep} from "@chainsafe/lodestar-utils";
 import {BeaconState} from "@chainsafe/lodestar-types";
 import {EpochContext} from "@chainsafe/lodestar-beacon-state-transition";
 import {CachedValidatorsBeaconState} from "@chainsafe/lodestar-beacon-state-transition/lib/fast/util";
@@ -25,10 +26,12 @@ export class StateContextCache {
     if (!item) {
       return null;
     }
+    await sleep(0);
     return this.clone(item);
   }
 
   public async add(item: ITreeStateContext): Promise<void> {
+    await sleep(0);
     this.cache[toHexString((item.state.getOriginalState() as TreeBacked<BeaconState>).hashTreeRoot())] = this.clone(
       item
     );
@@ -36,10 +39,12 @@ export class StateContextCache {
 
   public async delete(root: ByteVector): Promise<void> {
     delete this.cache[toHexString(root)];
+    await sleep(0);
   }
 
   public async batchDelete(roots: ByteVector[]): Promise<void> {
     await Promise.all(roots.map((root) => this.delete(root)));
+    await sleep(0);
   }
 
   public clear(): void {
@@ -73,6 +78,7 @@ export class StateContextCache {
    * @param epoch
    */
   public async valuesUnsafe(): Promise<ITreeStateContext[]> {
+    await sleep(0);
     return Object.values(this.cache).map((item) => this.clone(item));
   }
 
