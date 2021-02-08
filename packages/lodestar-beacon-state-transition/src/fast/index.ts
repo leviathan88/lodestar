@@ -11,18 +11,18 @@ export {IStateContext, EpochContext};
 /**
  * Implementation of protolambda's eth2fastspec (https://github.com/protolambda/eth2fastspec)
  */
-export function fastStateTransition(
+export async function fastStateTransition(
   {state, epochCtx}: IStateContext,
   signedBlock: SignedBeaconBlock,
   options?: {verifyStateRoot?: boolean; verifyProposer?: boolean; verifySignatures?: boolean}
-): IStateContext {
+): Promise<IStateContext> {
   const {verifyStateRoot = true, verifyProposer = true, verifySignatures = true} = options || {};
   const types = epochCtx.config.types;
 
   const block = signedBlock.message;
   const postState = state.clone();
   // process slots (including those with no blocks) since block
-  processSlots(epochCtx, postState, block.slot);
+  await processSlots(epochCtx, postState, block.slot);
 
   // verify signature
   if (verifyProposer) {

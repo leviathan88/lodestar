@@ -71,7 +71,7 @@ export async function processSlotsToNearestCheckpoint(
     nextEpochSlot <= postSlot;
     nextEpochSlot += SLOTS_PER_EPOCH
   ) {
-    processSlots(postCtx.epochCtx, postCtx.state, nextEpochSlot);
+    await processSlots(postCtx.epochCtx, postCtx.state, nextEpochSlot);
     emitCheckpointEvent(emitter, cloneStateCtx(postCtx));
     // this avoids keeping our node busy processing blocks
     await sleep(0);
@@ -91,7 +91,7 @@ export async function processSlotsByCheckpoint(
 ): Promise<ITreeStateContext> {
   const postCtx = await processSlotsToNearestCheckpoint(emitter, stateCtx, slot);
   if (postCtx.state.slot < slot) {
-    processSlots(postCtx.epochCtx, postCtx.state, slot);
+    await processSlots(postCtx.epochCtx, postCtx.state, slot);
   }
   return postCtx;
 }
@@ -134,7 +134,7 @@ export async function runStateTransition(
   const postSlot = job.signedBlock.message.slot;
 
   // if block is trusted don't verify proposer or op signature
-  const postStateContext = fastStateTransition(stateContext, job.signedBlock, {
+  const postStateContext = await fastStateTransition(stateContext, job.signedBlock, {
     verifyStateRoot: true,
     verifyProposer: !job.validSignatures && !job.validProposerSignature,
     verifySignatures: !job.validSignatures,
