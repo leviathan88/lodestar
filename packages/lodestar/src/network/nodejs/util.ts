@@ -32,13 +32,11 @@ export async function loadPeerIdFromJsonFile(path: string): Promise<PeerId> {
  * @param peerIdOrPromise Create an instance of NodejsNode asynchronously
  * @param network
  * @param peerStoreDir
- * @param autoDial
  */
 export async function createNodeJsLibp2p(
   peerIdOrPromise: PeerId | Promise<PeerId>,
   network: Partial<INetworkOptions> = {},
-  peerStoreDir?: string,
-  autoDial = true
+  peerStoreDir?: string
 ): Promise<LibP2p> {
   const peerId = await Promise.resolve(peerIdOrPromise);
   const localMultiaddrs = network.localMultiaddrs || defaultNetworkOptions.localMultiaddrs;
@@ -58,7 +56,6 @@ export async function createNodeJsLibp2p(
   return new NodejsNode({
     peerId,
     addresses: {listen: localMultiaddrs},
-    autoDial,
     datastore: peerStoreDir ? new LevelDatastore(peerStoreDir) : undefined,
     bootMultiaddrs: bootMultiaddrs,
     discv5: network.discv5 || defaultDiscv5Options,

@@ -1,7 +1,9 @@
 import {IBeaconParams} from "@chainsafe/lodestar-params";
 import {WinstonLogger} from "@chainsafe/lodestar-utils";
+import {Network} from "../../src/network";
 import {getDevBeaconNode} from "../utils/node/beacon";
 import {BeaconNode} from "../../src/node";
+import {connect} from "../utils/network";
 
 describe("Run multi node single thread", function () {
   const beaconParams: Pick<IBeaconParams, "SECONDS_PER_SLOT" | "SLOTS_PER_EPOCH"> = {
@@ -27,7 +29,6 @@ describe("Run multi node single thread", function () {
     for (let i = 0; i < nodeCount; i++) {
       const node = await getDevBeaconNode({
         params: beaconParams,
-        options: {sync: {minPeers: 1}},
         genesisTime,
         logger: logger.child({module: `Node ${i}`}),
       });
@@ -45,7 +46,7 @@ describe("Run multi node single thread", function () {
     for (let i = 0; i < nodeCount; i++) {
       for (let j = 0; j < nodeCount; j++) {
         if (i !== j) {
-          await nodes[i].network.connect(nodes[j].network.peerId, nodes[j].network.localMultiaddrs);
+          await connect(nodes[i].network as Network, nodes[j].network.peerId, nodes[j].network.localMultiaddrs);
         }
       }
     }

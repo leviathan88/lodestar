@@ -37,6 +37,7 @@ export class BeaconMetrics extends Metrics implements IBeaconMetrics {
   public observedEpochAttesters: Gauge;
   public observedEpochAggregators: Gauge;
   public blockProcessorTotalAsyncTime: Gauge;
+  syncChainsStarted: Gauge;
   peersByDirection: Gauge;
   peerConnectedEvent: Gauge;
   peerDisconnectedEvent: Gauge;
@@ -193,6 +194,13 @@ export class BeaconMetrics extends Metrics implements IBeaconMetrics {
     this.blockProcessorTotalAsyncTime = new Gauge({
       name: "lodestar_block_processor_total_async_time",
       help: "Total number of seconds spent completing block processor async jobs",
+      registers,
+    });
+
+    this.syncChainsStarted = new Gauge({
+      name: "lodestar_sync_chains_started",
+      help: "Total number of sync chains started events, labeled by syncType",
+      labelNames: ["syncType"],
       registers,
     });
 

@@ -1,5 +1,6 @@
 import {IBeaconParams} from "@chainsafe/lodestar-params";
 import {WinstonLogger} from "@chainsafe/lodestar-utils";
+import {Network} from "../../src/network";
 import {getDevBeaconNode} from "../utils/node/beacon";
 import {waitForEvent} from "../utils/events/resolver";
 import {phase0} from "@chainsafe/lodestar-types";
@@ -8,6 +9,7 @@ import {Validator} from "@chainsafe/lodestar-validator/lib";
 import {BeaconNode} from "../../src/node";
 import {ChainEvent} from "../../src/chain";
 import {testLogger, LogLevel} from "../utils/logger";
+import {connect} from "../utils/network";
 
 describe.skip("Run multi node single thread interop validators (no eth1) until checkpoint", function () {
   const checkpointEvent = ChainEvent.justified;
@@ -36,7 +38,6 @@ describe.skip("Run multi node single thread interop validators (no eth1) until c
       for (let i = 0; i < nodeCount; i++) {
         const node = await getDevBeaconNode({
           params: beaconParams,
-          options: {sync: {minPeers: 1}},
           validatorCount: nodeCount * validatorsPerNode,
           genesisTime,
           logger: testLogger(`Node ${i}`, LogLevel.info),
@@ -74,7 +75,7 @@ describe.skip("Run multi node single thread interop validators (no eth1) until c
       for (let i = 0; i < nodeCount; i++) {
         for (let j = 0; j < nodeCount; j++) {
           if (i !== j) {
-            await nodes[i].network.connect(nodes[j].network.peerId, nodes[j].network.localMultiaddrs);
+            await connect(nodes[i].network as Network, nodes[j].network.peerId, nodes[j].network.localMultiaddrs);
           }
         }
       }

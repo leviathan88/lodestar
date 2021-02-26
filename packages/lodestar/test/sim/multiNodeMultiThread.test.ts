@@ -37,7 +37,6 @@ describe("Run multi node multi thread interop validators (no eth1) until checkpo
       for (let i = 0; i < nodeCount; i++) {
         const options = {
           params: beaconParams,
-          options: {sync: {minPeers: 1}},
           validatorCount: nodeCount * validatorsPerNode,
           genesisTime,
           nodeIndex: i,

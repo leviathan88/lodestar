@@ -11,7 +11,7 @@ import {phase0} from "@chainsafe/lodestar-types";
 import {ILogger} from "@chainsafe/lodestar-utils";
 
 import {IBeaconDb} from "../db";
-import {INetwork, Network} from "../network";
+import {INetwork, Network, ReqRespHandler} from "../network";
 import {BeaconSync, IBeaconSync} from "../sync";
 import {BeaconChain, IBeaconChain, initBeaconMetrics} from "../chain";
 import {BeaconMetrics, HttpMetricsServer, IBeaconMetrics} from "../metrics";
@@ -147,6 +147,7 @@ export class BeaconNode {
       metrics,
       validator: gossipMessageValidator,
       chain,
+      reqRespHandler: new ReqRespHandler({db, chain}),
     });
     const sync = new BeaconSync(opts.sync, {
       config,
@@ -227,7 +228,7 @@ export class BeaconNode {
     if (this.status === BeaconNodeStatus.started) {
       this.status = BeaconNodeStatus.closing;
       await this.chores.stop();
-      await (this.sync as BeaconSync).stop();
+      (this.sync as BeaconSync).close();
       await this.network.stop();
       if (this.metricsServer) await this.metricsServer.stop();
       if (this.restApi) await this.restApi.close();

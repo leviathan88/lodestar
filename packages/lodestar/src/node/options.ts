@@ -17,9 +17,9 @@ export interface IBeaconNodeOptions {
   api: IApiOptions;
   eth1: IEth1Options;
   network: INetworkOptions;
-  sync: ISyncOptions;
   logger: IBeaconLoggerOptions;
   metrics: IMetricsOptions;
+  sync: ISyncOptions;
 }
 
 export const defaultOptions: IBeaconNodeOptions = {

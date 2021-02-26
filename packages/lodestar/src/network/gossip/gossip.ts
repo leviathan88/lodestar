@@ -23,7 +23,7 @@ import {ChainEvent, IBeaconChain} from "../../chain";
 import {computeEpochAtSlot, computeForkDigest} from "@chainsafe/lodestar-beacon-state-transition";
 import {GossipEncoding} from "./encoding";
 import {toHexString} from "@chainsafe/ssz";
-import {NetworkEvent} from "../interface";
+import {NetworkEvent} from "../events";
 
 export type GossipHandlerFn = (this: Gossip, obj: GossipObject) => void;
 
