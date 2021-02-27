@@ -1,11 +1,11 @@
 import {expect} from "chai";
 import PeerId from "peer-id";
 import {phase0} from "@chainsafe/lodestar-types";
-import {Discv5Query} from "../../../../src/network/peers/discover";
+import {AttSubnetQuery} from "../../../../src/network/peers/discover";
 import {prioritizePeers} from "../../../../src/network/peers/utils/prioritizePeers";
 import {getAttnets} from "../../../utils/network";
 
-type Result = {peersToDisconnect: PeerId[]; peersToConnect: number; discv5Queries: Discv5Query[]};
+type Result = {peersToDisconnect: PeerId[]; peersToConnect: number; discv5Queries: AttSubnetQuery[]};
 
 describe("network / peers / priorization", () => {
   const peers: PeerId[] = [];
@@ -93,7 +93,7 @@ describe("network / peers / priorization", () => {
 
   function cleanResult(
     res: Result
-  ): {peersToDisconnect: string[]; peersToConnect: number; discv5Queries: Discv5Query[]} {
+  ): {peersToDisconnect: string[]; peersToConnect: number; discv5Queries: AttSubnetQuery[]} {
     return {
       ...res,
       peersToDisconnect: res.peersToDisconnect.map((peer) => peer.toB58String()),

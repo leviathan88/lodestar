@@ -1,6 +1,10 @@
 import PeerId from "peer-id";
 import {PeerMap} from "../../../util/peerMap";
 
+/**
+ * Maps PeerIds to unix timestamps to implement a timeout map without timeouts
+ * Useful to track when a PeerId has to be PING'ed or STATUS'ed
+ */
 export class PeerMapDelay {
   interval: number;
   lastMsMap = new PeerMap<number>();

@@ -6,7 +6,7 @@ import {shuffle} from "../../util/shuffle";
 import {getConnectedPeerIds} from "./utils";
 import {IPeerRpcScoreStore, ScoreState} from "./score";
 
-export type Discv5Query = {subnetId: number; maxPeersToDiscover: number};
+export type AttSubnetQuery = {subnetId: number; maxPeersToDiscover: number};
 
 export type PeerDiscoveryOpts = {
   maxPeers: number;
@@ -19,6 +19,10 @@ export type PeerDiscoveryModules = {
   config: IBeaconConfig;
 };
 
+/**
+ * PeerDiscovery discovers and dials new peers, and executes discv5 queries.
+ * Currently relies on discv5 automatic periodic queries
+ */
 export class PeerDiscovery {
   private libp2p: LibP2p;
   private peerRpcScores: IPeerRpcScoreStore;
@@ -53,7 +57,7 @@ export class PeerDiscovery {
   /**
    * Request to find peers on a given subnet.
    */
-  async discoverSubnetPeers(subnetsToDiscover: Discv5Query[]): Promise<void> {
+  async discoverSubnetPeers(subnetsToDiscover: AttSubnetQuery[]): Promise<void> {
     const subnetsToDiscoverFiltered: number[] = [];
 
     for (const {subnetId, maxPeersToDiscover} of subnetsToDiscover) {

@@ -3,14 +3,14 @@ import {Slot} from "@chainsafe/lodestar-types";
 export type RequestedSubnet = {
   subnetId: number;
   /**
-   * Slot after which the network will stop to mantain a min number of peers
-   *  connected to `subnetId`
+   * Slot after which the network will stop maintaining a min number of peers
+   * connected to `subnetId`
    */
   toSlot: Slot;
 };
 
 /**
- * Track request subnets by `toSlot`
+ * Track requested subnets by `toSlot`
  */
 export class SubnetMap {
   /** Map of subnets and the slot until they are needed */

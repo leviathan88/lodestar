@@ -2,7 +2,7 @@ import PeerId from "peer-id";
 import {phase0} from "@chainsafe/lodestar-types";
 import {shuffle} from "../../../util/shuffle";
 import {sortBy} from "../../../util/sortBy";
-import {Discv5Query} from "../discover";
+import {AttSubnetQuery} from "../discover";
 
 /** Target number of peers we'd like to have connected to a given long-lived subnet */
 const MAX_TARGET_SUBNET_PEERS = 6;
@@ -18,18 +18,18 @@ export function prioritizePeers(
   connectedPeers: {id: PeerId; attnets: phase0.AttestationSubnets; score: number}[],
   activeSubnetIds: number[],
   {targetPeers, maxPeers}: {targetPeers: number; maxPeers: number}
-): {peersToDisconnect: PeerId[]; peersToConnect: number; discv5Queries: Discv5Query[]} {
+): {peersToDisconnect: PeerId[]; peersToConnect: number; discv5Queries: AttSubnetQuery[]} {
   const peersToDisconnect: PeerId[] = [];
   let peersToConnect = 0;
-  const discv5Queries: Discv5Query[] = [];
+  const discv5Queries: AttSubnetQuery[] = [];
 
-  // Dynamically compute 1 >= TARGET_PEERS_PER_SUBNET <= MAX_TARGET_SUBNET_PEERS
+  // Dynamically compute 1 <= TARGET_PEERS_PER_SUBNET <= MAX_TARGET_SUBNET_PEERS
   const targetPeersPerSubnet = Math.min(
     MAX_TARGET_SUBNET_PEERS,
     Math.max(1, Math.floor(maxPeers / activeSubnetIds.length))
   );
 
-  // To filter out peers that are part of 1+ attnets of interest
+  // To filter out peers that are part of 1+ attnets of interest from possible disconnection
   const peerHasDuty = new Map<string, boolean>();
 
   if (activeSubnetIds.length > 0) {

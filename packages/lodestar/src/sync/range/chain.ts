@@ -74,6 +74,10 @@ export enum SyncChainStatus {
   Error = "Error",
 }
 
+/**
+ * A chain of blocks that need to be downloaded. Peers who claim to contain the target head
+ * root are grouped into the peer pool and queried for batches when downloading the chain.
+ */
 export class SyncChain {
   /** Short string id to identify this SyncChain in logs */
   readonly logId: string;

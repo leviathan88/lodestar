@@ -1,7 +1,7 @@
-import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import PeerId from "peer-id";
-import {ILogger} from "@chainsafe/lodestar-utils";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {phase0} from "@chainsafe/lodestar-types";
+import {ILogger} from "@chainsafe/lodestar-utils";
 import {Method, Methods} from "../../constants";
 import {IPeerMetadataStore, IPeerRpcScoreStore} from "../peers";
 import {MetadataController} from "../metadata";

@@ -63,7 +63,7 @@ export type PeerManagerModules = {
 };
 
 /**
- * Tasks:
+ * Performs all peer managment functionality in a single grouped class:
  * - Ping peers every `PING_INTERVAL_MS`
  * - Status peers every `STATUS_INTERVAL_MS`
  * - Execute discovery query if under target peers
@@ -71,7 +71,6 @@ export type PeerManagerModules = {
  * - Disconnect peers if over target peers
  */
 export class PeerManager implements IPeerManager {
-  // TODO: Reorg - TEMP
   private libp2p: LibP2p;
   private logger: ILogger;
   private metrics: IBeaconMetrics;
