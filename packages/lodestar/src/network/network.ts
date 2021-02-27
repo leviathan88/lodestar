@@ -39,8 +39,8 @@ export class Network implements INetwork {
   public gossip: IGossip;
   public metadata: MetadataController;
   public peerRpcScores: IPeerRpcScoreStore;
-  public peerManager: PeerManager;
 
+  private peerManager: PeerManager;
   private libp2p: LibP2p;
   private logger: ILogger;
 

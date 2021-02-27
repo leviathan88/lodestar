@@ -19,15 +19,6 @@ import {
   prioritizePeers,
 } from "./utils";
 
-export interface IPeerManager {
-  start(): void;
-  stop(): void;
-  getConnectedPeerIds(): PeerId[];
-  goodbyeAndDisconnectAllPeers(): Promise<void>;
-  requestAttSubnets(requestedSubnets: RequestedSubnet[]): void;
-  reStatusPeers(peers: PeerId[]): void;
-}
-
 /** heartbeat performs regular updates such as updating reputations and performing discovery requests */
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 /** The time in seconds between PING events. We do not send a ping if the other peer has PING'd us */
@@ -37,6 +28,8 @@ const PING_INTERVAL_OUTBOUND_MS = 17 * 1000;
 const STATUS_INTERVAL_MS = 5 * 60 * 1000;
 /** Expect a STATUS request from on inbound peer for some time. Afterwards the node does a request */
 const STATUS_INBOUND_GRACE_PERIOD = 15 * 1000;
+/** Internal interval to check PING and STATUS timeouts */
+const CHECK_PING_STATUS_INTERVAL = 2 * 1000;
 
 // TODO:
 // maxPeers and targetPeers should be dynamic on the num of validators connected
@@ -70,7 +63,7 @@ export type PeerManagerModules = {
  * - Execute discovery query if need peers on some subnet: TODO
  * - Disconnect peers if over target peers
  */
-export class PeerManager implements IPeerManager {
+export class PeerManager {
   private libp2p: LibP2p;
   private logger: ILogger;
   private metrics: IBeaconMetrics;
@@ -117,7 +110,7 @@ export class PeerManager implements IPeerManager {
     // On start-up will connected to existing peers in libp2p.peerStore, same as autoDial behaviour
     this.heartbeat();
     this.intervals = [
-      setInterval(() => this.pingAndStatusTimeouts(), 2 * 1000),
+      setInterval(() => this.pingAndStatusTimeouts(), CHECK_PING_STATUS_INTERVAL),
       setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS),
     ];
   }

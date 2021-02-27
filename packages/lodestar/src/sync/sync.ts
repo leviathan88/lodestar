@@ -47,12 +47,8 @@ export class BeaconSync implements IBeaconSync {
     this.slotImportTolerance = modules.config.params.SLOTS_PER_EPOCH;
 
     this.rangeSync.on(RangeSyncEvent.completedChain, this.updateSyncState);
-  }
-
-  public async start(): Promise<void> {
     this.network.events.on(NetworkEvent.peerConnected, this.addPeer);
     this.network.events.on(NetworkEvent.peerDisconnected, this.removePeer);
-
     // TODO: It's okay to start this on initial sync?
     this.chain.emitter.on(ChainEvent.errorBlock, this.onUnknownBlockRoot);
     this.attestationCollector.start();

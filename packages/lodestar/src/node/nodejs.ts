@@ -197,10 +197,6 @@ export class BeaconNode {
     await metricsServer.start();
     await network.start();
 
-    // TODO: refactor the sync module to respect the "start should resolve quickly" interface
-    // Now if sync.start() is awaited it will stall the node start process
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    sync.start();
     chores.start();
 
     void runNodeNotifier({network, chain, sync, config, logger, signal});
@@ -228,7 +224,7 @@ export class BeaconNode {
     if (this.status === BeaconNodeStatus.started) {
       this.status = BeaconNodeStatus.closing;
       await this.chores.stop();
-      (this.sync as BeaconSync).close();
+      this.sync.close();
       await this.network.stop();
       if (this.metricsServer) await this.metricsServer.stop();
       if (this.restApi) await this.restApi.close();

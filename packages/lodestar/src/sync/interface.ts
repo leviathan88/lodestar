@@ -12,6 +12,7 @@ export {SyncChainDebugState};
 
 export interface IBeaconSync {
   state: SyncState;
+  close(): void;
   getSyncStatus(): phase0.SyncingStatus;
   isSynced(): boolean;
   isSyncing(): boolean;

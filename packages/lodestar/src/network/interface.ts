@@ -7,7 +7,7 @@ import PeerId from "peer-id";
 import {INetworkEventBus} from "./events";
 import {IGossip} from "./gossip/interface";
 import {MetadataController} from "./metadata";
-import {RequestedSubnet, IPeerManager, IPeerRpcScoreStore} from "./peers";
+import {RequestedSubnet, IPeerRpcScoreStore} from "./peers";
 import {IReqResp} from "./reqresp";
 
 export type PeerSearchOptions = {
@@ -21,7 +21,6 @@ export interface INetwork {
   gossip: IGossip;
   metadata: MetadataController;
   peerRpcScores: IPeerRpcScoreStore;
-  peerManager: IPeerManager;
   /** Our network identity */
   peerId: PeerId;
   localMultiaddrs: Multiaddr[];
