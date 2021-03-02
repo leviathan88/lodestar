@@ -40,7 +40,7 @@ type RangeSyncState =
 export type RangeSyncModules = {
   chain: IBeaconChain;
   network: INetwork;
-  metrics: IBeaconMetrics;
+  metrics?: IBeaconMetrics;
   config: IBeaconConfig;
   logger: ILogger;
 };
@@ -74,7 +74,7 @@ export type RangeSyncOpts = SyncChainOpts;
 export class RangeSync extends (EventEmitter as {new (): RangeSyncEmitter}) {
   private readonly chain: IBeaconChain;
   private readonly network: INetwork;
-  private readonly metrics: IBeaconMetrics;
+  private readonly metrics?: IBeaconMetrics;
   private readonly config: IBeaconConfig;
   private readonly logger: ILogger;
   private readonly chains = new Map<string, SyncChain>();
@@ -250,7 +250,7 @@ export class RangeSync extends (EventEmitter as {new (): RangeSyncEmitter}) {
 
     for (const syncChain of toStart) {
       syncChain.startSyncing(localFinalizedEpoch);
-      if (!syncChain.isSyncing) this.metrics.syncChainsStarted.inc({syncType: syncChain.syncType});
+      if (!syncChain.isSyncing) this.metrics?.syncChainsStarted.inc({syncType: syncChain.syncType});
     }
   }
 }

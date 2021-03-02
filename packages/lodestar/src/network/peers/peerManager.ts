@@ -46,7 +46,7 @@ export type PeerManagerOpts = {
 export type PeerManagerModules = {
   libp2p: LibP2p;
   logger: ILogger;
-  metrics: IBeaconMetrics;
+  metrics?: IBeaconMetrics;
   reqResp: IReqResp;
   chain: IBeaconChain;
   config: IBeaconConfig;
@@ -66,7 +66,7 @@ export type PeerManagerModules = {
 export class PeerManager {
   private libp2p: LibP2p;
   private logger: ILogger;
-  private metrics: IBeaconMetrics;
+  private metrics?: IBeaconMetrics;
   private reqResp: IReqResp;
   private chain: IBeaconChain;
   private config: IBeaconConfig;
@@ -201,7 +201,7 @@ export class PeerManager {
   private onGoodbye(peer: PeerId, goodbye: phase0.Goodbye): void {
     const reason = GOODBYE_KNOWN_CODES[goodbye.toString()] || "";
     this.logger.verbose("Received goodbye request", {peer: peer.toB58String(), goodbye, reason});
-    this.metrics.peerGoodbyeReceived.inc({reason});
+    this.metrics?.peerGoodbyeReceived.inc({reason});
 
     // TODO: Consider register that we are banned, if discovery keeps attempting to connect to the same peers
 
@@ -370,9 +370,9 @@ export class PeerManager {
 
     this.logger.verbose("peer connected", {peerId: peer.toB58String(), direction, status});
     // NOTE: The peerConnect event is not emitted here here, but after asserting peer relevance
-    this.metrics.peerConnectedEvent.inc({direction});
+    this.metrics?.peerConnectedEvent.inc({direction});
     this.seenPeers.add(peer.toB58String());
-    this.metrics.peersTotalUniqueConnected.set(this.seenPeers.size);
+    this.metrics?.peersTotalUniqueConnected.set(this.seenPeers.size);
     this.runPeerCountMetrics();
   };
 
@@ -390,7 +390,7 @@ export class PeerManager {
 
     this.logger.verbose("peer disconnected", {peerId: peer.toB58String(), direction, status});
     this.networkEventBus.emit(NetworkEvent.peerDisconnected, peer);
-    this.metrics.peerDisconnectedEvent.inc({direction});
+    this.metrics?.peerDisconnectedEvent.inc({direction});
     this.runPeerCountMetrics(); // Last in case it throws
   };
 
@@ -404,7 +404,7 @@ export class PeerManager {
 
   private async goodbyeAndDisconnect(peer: PeerId, goodbye: GoodByeReasonCode): Promise<void> {
     try {
-      this.metrics.peerGoodbyeSent.inc({reason: GOODBYE_KNOWN_CODES[goodbye.toString()] || ""});
+      this.metrics?.peerGoodbyeSent.inc({reason: GOODBYE_KNOWN_CODES[goodbye.toString()] || ""});
       await this.reqResp.goodbye(peer, BigInt(goodbye));
     } catch (e) {
       this.logger.verbose("Failed to send goodbye", {error: e.message});
@@ -427,9 +427,9 @@ export class PeerManager {
     }
 
     for (const [direction, peers] of peersByDirection.entries()) {
-      this.metrics.peersByDirection.set({direction}, peers);
+      this.metrics?.peersByDirection.set({direction}, peers);
     }
 
-    this.metrics.peers.set(total);
+    this.metrics?.peers.set(total);
   }
 }
