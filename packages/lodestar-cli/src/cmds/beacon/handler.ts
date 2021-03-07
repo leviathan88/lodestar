@@ -1,6 +1,6 @@
 import {AbortController} from "abort-controller";
 
-import {consoleTransport, fileTransport, WinstonLogger} from "@chainsafe/lodestar-utils";
+import {consoleTransport, ErrorAborted, fileTransport, WinstonLogger} from "@chainsafe/lodestar-utils";
 import {LevelDbController} from "@chainsafe/lodestar-db";
 import {createNodeJsLibp2p} from "@chainsafe/lodestar/lib/network/nodejs";
 import {BeaconNode} from "@chainsafe/lodestar/lib/node";
@@ -72,6 +72,11 @@ export async function beaconHandler(args: IBeaconArgs & IGlobalArgs): Promise<vo
     abortController.signal.addEventListener("abort", () => node.close(), {once: true});
   } catch (e) {
     await db.stop();
-    throw e;
+
+    if (e instanceof ErrorAborted) {
+      logger.info(e.message);
+    } else {
+      throw e;
+    }
   }
 }
