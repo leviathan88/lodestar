@@ -54,20 +54,24 @@ export async function beaconHandler(args: IBeaconArgs & IGlobalArgs): Promise<vo
     config,
     controller: new LevelDbController(options.db, {logger: logger.child(options.logger.db)}),
   });
-  const dbClose = (): Promise<void> => db.stop();
-  abortController.signal.addEventListener("abort", dbClose, {once: true});
+
   await db.start();
 
   // BeaconNode setup
-  const anchorState = await initBeaconState(options, args, config, db, logger, abortController.signal);
-  const node = await BeaconNode.init({
-    opts: options,
-    config,
-    db,
-    logger,
-    libp2p: await createNodeJsLibp2p(peerId, options.network, beaconPaths.peerStoreDir),
-    anchorState,
-  });
-  abortController.signal.removeEventListener("abort", dbClose);
-  abortController.signal.addEventListener("abort", () => node.close(), {once: true});
+  try {
+    const anchorState = await initBeaconState(options, args, config, db, logger, abortController.signal);
+    const node = await BeaconNode.init({
+      opts: options,
+      config,
+      db,
+      logger,
+      libp2p: await createNodeJsLibp2p(peerId, options.network, beaconPaths.peerStoreDir),
+      anchorState,
+    });
+
+    abortController.signal.addEventListener("abort", () => node.close(), {once: true});
+  } catch (e) {
+    await db.stop();
+    throw e;
+  }
 }
