@@ -60,6 +60,7 @@ export class GenesisBuilder implements IGenesisBuilder {
     };
 
     if (pendingStatus) {
+      this.logger.info("Restoring pending genesis state", {block: pendingStatus.lastProcessedBlockNumber});
       this.state = pendingStatus.state;
       this.depositTree = pendingStatus.depositTree;
       this.lastProcessedBlockNumber = pendingStatus.lastProcessedBlockNumber;

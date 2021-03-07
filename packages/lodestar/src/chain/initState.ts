@@ -93,7 +93,7 @@ export async function initStateFromEth1(
 
     await persistGenesisResult(db, genesisResult, genesisBlock);
 
-    // Clear pending status if any
+    logger.verbose("Clearing pending genesis state if any");
     await db.preGenesisState.delete();
     await db.preGenesisStateLastProcessedBlock.delete();
 
