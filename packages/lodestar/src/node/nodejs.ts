@@ -143,20 +143,20 @@ export class BeaconNode {
       chain,
       db,
     });
+    const chores = new TasksService(config, {
+      db,
+      chain,
+      network,
+      logger: logger.child(opts.logger.chores),
+    });
     const sync = new BeaconSync(opts.sync, {
       config,
       db,
       chain,
       metrics,
       network,
+      chores,
       logger: logger.child(opts.logger.sync),
-    });
-    const chores = new TasksService(config, {
-      db,
-      chain,
-      sync,
-      network,
-      logger: logger.child(opts.logger.chores),
     });
 
     const api = new Api(opts.api, {
@@ -198,7 +198,7 @@ export class BeaconNode {
     // Now if sync.start() is awaited it will stall the node start process
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
     sync.start();
-    chores.start();
+    await chores.start();
 
     void runNodeNotifier({network, chain, sync, config, logger, signal});
 
