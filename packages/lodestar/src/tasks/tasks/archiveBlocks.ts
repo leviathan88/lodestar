@@ -75,7 +75,7 @@ export class ArchiveBlocksTask {
   /**
    * Returns the blocks being moved from blocks db to archivedBlocks db.
    */
-  public getArchivingStatus(): IArchivingStatus {
+  getArchivingStatus(): IArchivingStatus {
     return {
       lastFinalizedSlot: this.lastFinalizedSlot,
       finalizingSlot: this.finalizingSlot,
@@ -85,7 +85,7 @@ export class ArchiveBlocksTask {
   /**
    * Wait for run() to be done.
    */
-  public waitUntilComplete(): Promise<void> {
+  waitUntilComplete(): Promise<void> {
     return new Promise((resolve) => {
       this.subscribedPromises.push(resolve);
     });

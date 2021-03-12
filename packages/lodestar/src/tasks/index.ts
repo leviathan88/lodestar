@@ -86,11 +86,11 @@ export class TasksService implements ITaskService {
     ).run();
   }
 
-  public getBlockArchivingStatus(): IArchivingStatus {
+  getBlockArchivingStatus(): IArchivingStatus {
     return this.blockArchiver!.getArchivingStatus();
   }
 
-  public async waitForBlockArchiver(): Promise<void> {
+  async waitForBlockArchiver(): Promise<void> {
     return await this.blockArchiver!.waitUntilComplete();
   }
 
