@@ -155,7 +155,7 @@ export class MockBeaconChain implements IBeaconChain {
     return;
   }
 
-  async close(): Promise<void> {
+  close(): void {
     this.abortController.abort();
     return;
   }

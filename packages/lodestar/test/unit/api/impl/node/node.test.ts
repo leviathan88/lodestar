@@ -46,8 +46,8 @@ describe("node api implementation", function () {
       const enr = ENR.createV4(keypair.publicKey);
       enr.setLocationMultiaddr(new Multiaddr("/ip4/127.0.0.1/tcp/36001"));
       networkStub.getEnr.returns(enr);
-      networkStub.peerId = peerId;
-      networkStub.localMultiaddrs = [new Multiaddr("/ip4/127.0.0.1/tcp/36000")];
+      sinon.stub(networkStub, "peerId").get(() => peerId);
+      sinon.stub(networkStub, "localMultiaddrs").get(() => [new Multiaddr("/ip4/127.0.0.1/tcp/36000")]);
       networkStub.metadata = {
         get all(): phase0.Metadata {
           return {
@@ -69,8 +69,8 @@ describe("node api implementation", function () {
     it("should get node identity - no enr", async function () {
       const peerId = await PeerId.create({keyType: "secp256k1"});
       networkStub.getEnr.returns(null!);
-      networkStub.peerId = peerId;
-      networkStub.localMultiaddrs = [new Multiaddr("/ip4/127.0.0.1/tcp/36000")];
+      sinon.stub(networkStub, "peerId").get(() => peerId);
+      sinon.stub(networkStub, "localMultiaddrs").get(() => [new Multiaddr("/ip4/127.0.0.1/tcp/36000")]);
       const identity = await api.getNodeIdentity();
       expect(identity.enr).equal("");
     });
