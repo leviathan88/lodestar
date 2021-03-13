@@ -49,11 +49,11 @@ export class StatesArchiver {
    * - Minimize disk space, storing the least states possible
    * - Minimize the sync progress lost on unexpected crash, storing temp state every few epochs
    *
-   * At epoch `x` there will be states peristed at intervals of `MIN_EPOCHS_PER_DB_STATE`
-   * and one at `MIN_EPOCHS_PER_DB_STATE / LATEST_STATE_FACTOR`
+   * At epoch `e` there will be states peristed at intervals of `PERSIST_STATE_EVERY_EPOCHS` = 32
+   * and one at `PERSIST_TEMP_STATE_EVERY_EPOCHS` = 1024
    * ```
-   *    |         |       |    |
-   * x-1024*2  x-1024   x-32   x
+   *        |                |             |           .
+   * epoch - 1024*2    epoch - 1024    epoch - 32    epoch
    * ```
    */
   async maybeArchiveState(finalized: phase0.Checkpoint): Promise<void> {
@@ -63,7 +63,11 @@ export class StatesArchiver {
     if (finalized.epoch - lastStoredEpoch > PERSIST_TEMP_STATE_EVERY_EPOCHS) {
       await this.archiveState(finalized);
 
-      const storedEpochs = await this.db.stateArchive.keys({lt: finalized.epoch});
+      const storedEpochs = await this.db.stateArchive.keys({
+        lt: finalized.epoch,
+        // Only check the current and previous intervals
+        gte: Math.max(0, (Math.floor(finalized.epoch / PERSIST_STATE_EVERY_EPOCHS) - 1) * PERSIST_STATE_EVERY_EPOCHS),
+      });
       const statesToDelete = computeEpochsToDelete(storedEpochs, PERSIST_STATE_EVERY_EPOCHS);
       if (statesToDelete.length > 0) {
         await this.db.stateArchive.batchDelete(statesToDelete);
@@ -91,7 +95,7 @@ export class StatesArchiver {
 }
 
 /**
- * Keeps first epoch per bucket of persistEveryEpochs, deletes the rest
+ * Keeps first epoch per interval of persistEveryEpochs, deletes the rest
  */
 export function computeEpochsToDelete(storedEpochs: number[], persistEveryEpochs: number): number[] {
   const epochBuckets = new Set<number>();
