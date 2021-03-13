@@ -3,13 +3,15 @@
  */
 
 import {toHexString} from "@chainsafe/ssz";
-import {phase0, Slot} from "@chainsafe/lodestar-types";
+import {Gwei, Slot} from "@chainsafe/lodestar-types";
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {ForkChoice, ProtoArray} from "@chainsafe/lodestar-fork-choice";
 
 import {computeAnchorCheckpoint} from "../initState";
 import {ChainEventEmitter} from "../emitter";
 import {ForkChoiceStore} from "./store";
+import {phase0} from "@chainsafe/lodestar-beacon-state-transition";
+import {ITreeStateContext} from "../interface";
 
 /**
  * Fork Choice extended with a ChainEventEmitter
@@ -19,14 +21,14 @@ export class LodestarForkChoice extends ForkChoice {
     config,
     emitter,
     currentSlot,
-    anchorState,
+    anchorStateCtx,
   }: {
     config: IBeaconConfig;
     emitter: ChainEventEmitter;
     currentSlot: Slot;
-    anchorState: phase0.BeaconState;
+    anchorStateCtx: ITreeStateContext;
   }) {
-    const {blockHeader, checkpoint} = computeAnchorCheckpoint(config, anchorState);
+    const {blockHeader, checkpoint} = computeAnchorCheckpoint(config, anchorStateCtx.state);
     const finalizedCheckpoint = {...checkpoint};
     const justifiedCheckpoint = {
       ...checkpoint,
@@ -36,6 +38,11 @@ export class LodestarForkChoice extends ForkChoice {
       // with the head not matching the fork choice justified and finalized epochs.
       epoch: checkpoint.epoch === 0 ? checkpoint.epoch : checkpoint.epoch + 1,
     };
+    const justifiedEpoch = anchorStateCtx.epochCtx.currentShuffling.epoch;
+    const justifiedBalances: Gwei[] = [];
+    anchorStateCtx.state.flatValidators().readOnlyForEach((v) => {
+      justifiedBalances.push(phase0.fast.isActiveIFlatValidator(v, justifiedEpoch) ? v.effectiveBalance : BigInt(0));
+    });
     super({
       config,
 
@@ -56,6 +63,7 @@ export class LodestarForkChoice extends ForkChoice {
       }),
 
       queuedAttestations: new Set(),
+      justifiedBalances,
     });
   }
 }

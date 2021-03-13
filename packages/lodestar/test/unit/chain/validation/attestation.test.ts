@@ -18,6 +18,7 @@ import {generateAttestation} from "../../../utils/attestation";
 import {generateCachedState} from "../../../utils/state";
 import {LocalClock} from "../../../../src/chain/clock";
 import {AttestationErrorCode} from "../../../../src/chain/errors";
+import {Gwei} from "@chainsafe/lodestar-types";
 
 describe("gossip attestation validation", function () {
   let chain: SinonStubbedInstance<IBeaconChain>;
@@ -479,6 +480,7 @@ describe("gossip attestation validation", function () {
         finalizedEpoch: 0,
       }),
       queuedAttestations: new Set(),
+      justifiedBalances: [] as Gwei[],
     });
     db.seenAttestationCache.hasCommitteeAttestation.returns(false);
     forkChoice.hasBlock.returns(true);

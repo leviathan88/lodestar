@@ -1,4 +1,4 @@
-import {ChainEventEmitter, computeAnchorCheckpoint, LodestarForkChoice} from "../../../../src/chain";
+import {ChainEventEmitter, computeAnchorCheckpoint, ITreeStateContext, LodestarForkChoice} from "../../../../src/chain";
 import {generateState} from "../../../utils/state";
 import {config} from "@chainsafe/lodestar-config/minimal";
 import {Slot, ValidatorIndex} from "@chainsafe/lodestar-types";
@@ -6,6 +6,10 @@ import {generateSignedBlock} from "../../../utils/block";
 import {computeEpochAtSlot, getTemporaryBlockHeader, phase0} from "@chainsafe/lodestar-beacon-state-transition";
 import {expect} from "chai";
 import {List} from "@chainsafe/ssz";
+import {
+  createCachedValidatorsBeaconState,
+  EpochContext,
+} from "@chainsafe/lodestar-beacon-state-transition/lib/phase0/fast";
 
 describe("LodestarForkChoice", function () {
   let forkChoice: LodestarForkChoice;
@@ -13,10 +17,23 @@ describe("LodestarForkChoice", function () {
   // Jan 01 2020
   anchorState.genesisTime = 1577836800;
 
+  let stateContext: ITreeStateContext;
+
+  before(() => {
+    stateContext = {
+      state: createCachedValidatorsBeaconState(anchorState),
+      epochCtx: {currentShuffling: {epoch: 0}} as EpochContext,
+    };
+  });
   beforeEach(() => {
     const emitter = new ChainEventEmitter();
     const currentSlot = 0;
-    forkChoice = new LodestarForkChoice({config, emitter, currentSlot, anchorState});
+    forkChoice = new LodestarForkChoice({
+      config,
+      emitter,
+      currentSlot,
+      anchorStateCtx: stateContext,
+    });
   });
 
   describe("forkchoice", function () {

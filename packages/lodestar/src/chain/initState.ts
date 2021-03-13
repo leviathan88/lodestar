@@ -14,6 +14,7 @@ import {IBeaconMetrics} from "../metrics";
 import {GenesisBuilder} from "./genesis/genesis";
 import {IGenesisResult} from "./genesis/interface";
 import {CheckpointStateCache, StateContextCache} from "./stateCache";
+import {ITreeStateContext} from "./interface";
 
 export async function persistGenesisResult(
   db: IBeaconDb,
@@ -131,16 +132,16 @@ export function restoreStateCaches(
   stateCache: StateContextCache,
   checkpointStateCache: CheckpointStateCache,
   state: TreeBacked<phase0.BeaconState>
-): void {
+): ITreeStateContext {
   const {checkpoint} = computeAnchorCheckpoint(config, state);
   const epochCtx = new phase0.fast.EpochContext(config);
   epochCtx.loadState(state);
-
   const stateCtx = {state: phase0.fast.createCachedValidatorsBeaconState(state), epochCtx};
 
   // store state in state caches
   void stateCache.add(stateCtx);
   checkpointStateCache.add(checkpoint, stateCtx);
+  return stateCtx;
 }
 
 export function initBeaconMetrics(metrics: IBeaconMetrics, state: TreeBacked<phase0.BeaconState>): void {
