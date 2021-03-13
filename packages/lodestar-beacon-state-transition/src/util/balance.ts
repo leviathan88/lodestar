@@ -5,6 +5,7 @@
 import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {allForks, Gwei, ValidatorIndex} from "@chainsafe/lodestar-types";
 import {bigIntMax} from "@chainsafe/lodestar-utils";
+import {IStateContext, isActiveIFlatValidator} from "../phase0/fast";
 import {getCurrentEpoch} from "./epoch";
 import {getActiveValidatorIndices} from "./validator";
 
@@ -45,4 +46,16 @@ export function increaseBalance(state: allForks.BeaconState, index: ValidatorInd
 export function decreaseBalance(state: allForks.BeaconState, index: ValidatorIndex, delta: Gwei): void {
   const currentBalance = state.balances[index];
   state.balances[index] = delta > currentBalance ? BigInt(0) : currentBalance - delta;
+}
+
+/**
+ * This method is used to get justified balances from a justified state.
+ */
+export function getEffectiveBalances(stateCtx: IStateContext): Gwei[] {
+  const epoch = stateCtx.epochCtx.currentShuffling.epoch;
+  const effectiveBalances: Gwei[] = [];
+  stateCtx.state.flatValidators().readOnlyForEach((v) => {
+    effectiveBalances.push(isActiveIFlatValidator(v, epoch) ? v.effectiveBalance : BigInt(0));
+  });
+  return effectiveBalances;
 }
